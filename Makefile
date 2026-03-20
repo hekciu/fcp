@@ -3,14 +3,17 @@ INCLUDE_DIR = inc
 BUILD_DIR = build
 SRC_DIR = c
 CC_FLAGS = -ggdb -I${INCLUDE_DIR}
-SOURCES = ${BUILD_DIR}/main.o ${BUILD_DIR}/common.o
-INCLUDES = ${INCLUDE_DIR}/common.h ${INCLUDE_DIR}/config.h ${INCLUDE_DIR}/error_codes.h
+SOURCES = ${BUILD_DIR}/main.o ${BUILD_DIR}/common.o ${BUILD_DIR}/copy.o
+INCLUDES = ${INCLUDE_DIR}/common.h ${INCLUDE_DIR}/config.h ${INCLUDE_DIR}/error_codes.h ${INCLUDE_DIR}/copy.h
 
 ${BUILD_DIR}/main.o: main.c ${BUILD_DIR} ${INCLUDES}
 	gcc ${CC_FLAGS} -o $@ -c main.c
 
 ${BUILD_DIR}/common.o: ${SRC_DIR}/common.c ${BUILD_DIR} ${INCLUDES}
 	gcc ${CC_FLAGS} -o $@ -c ${SRC_DIR}/common.c
+
+${BUILD_DIR}/copy.o: ${SRC_DIR}/copy.c ${BUILD_DIR} ${INCLUDES}
+	gcc ${CC_FLAGS} -o $@ -c ${SRC_DIR}/copy.c
 
 fcp: ${SOURCES}
 	gcc ${CC_FLAGS} -o fcp ${SOURCES}
