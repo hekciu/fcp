@@ -4,7 +4,8 @@
 typedef enum {
     FCP_OK,
     FCP_BAD_ARGUMENTS,
-    FCP_DIR_NOT_EXIST
+    FCP_DIR_NOT_EXIST,
+    FCP_SYSCALL_FAILED
 } FCP_ERROR;
 
 #endif

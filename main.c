@@ -25,11 +25,14 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    if (argc < 3) fcp_exit(FCP_BAD_ARGUMENTS);
+
     copy_config_t config = {0};
 
-    copy("test", "test", &config);
+    config.src = argv[1];
+    config.dest = argv[2];
 
-    fcp_exit(FCP_BAD_ARGUMENTS);
+    HANDLE_ERROR(fcp_copy(&config));
 
     return 0;
 }

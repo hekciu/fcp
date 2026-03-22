@@ -8,9 +8,11 @@
 typedef struct {
     uint32_t n_threads;
     uint32_t queue_depth;
+    const char* src;
+    const char* dest;
 } copy_config_t;
 
-FCP_ERROR copy(char* src, char* dir, copy_config_t* config);
+FCP_ERROR fcp_copy(copy_config_t* config);
 
 #endif
 
