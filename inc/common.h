@@ -12,4 +12,6 @@ void fcp_print_help_message();
 
 #define SYSCALL_ERR_HANDLE(val) {if(val < 0) {fprintf(stderr, "%s\n", strerrordesc_np(errno));return FCP_SYSCALL_FAILED;}}
 
+#define HANDLE_ERROR(fcp_err) {if ((fcp_err) != FCP_OK) { fcp_exit(fcp_err); }}
+
 #endif

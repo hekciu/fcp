@@ -9,7 +9,6 @@
 #include "copy.h"
 
 
-#define HANDLE_ERROR(fcp_err) {if ((fcp_err) != FCP_OK) { fcp_exit(fcp_err); }}
 
 bool compare_arg(int argc, char** argv, uint32_t index, const char* value) {
     if (argc <= index) return false;
