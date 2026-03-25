@@ -1,11 +1,15 @@
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "copy.h"
 #include "common.h"
 
-static FCP_ERROR assert_file_type(int fd);
-static FCP_ERROR get_file_size(int fd, off_t* out);
+static FCP_ERROR assert_file_type(struct stat* sb);
+static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
+
+#define COPY_BUFFER_SIZE 2000
+static char copy_buffer[COPY_BUFFER_SIZE];
 
 
 FCP_ERROR fcp_copy(copy_config_t* config) {
@@ -24,29 +28,42 @@ FCP_ERROR fcp_copy(copy_config_t* config) {
 
     SYSCALL_ERR_HANDLE((dest_fd = open(config->dest, write_args)));
 
-    HANDLE_ERROR(assert_file_type(src_fd));
+    struct stat src_sb = {0};
+    SYSCALL_ERR_HANDLE(fstat(src_fd, &src_sb));
+
+    HANDLE_ERROR(assert_file_type(&src_sb));
+
+    off_t src_size = 0;
+
+    HANDLE_ERROR(get_file_size(&src_sb, &src_size));
+
+    size_t n_rounds = (src_size / COPY_BUFFER_SIZE) + 1;
+
+    for (int i = 0; i < n_rounds; i++) {
+        size_t bytes_left = src_size - (i * COPY_BUFFER_SIZE);
+
+        size_t copy_bytes = bytes_left > COPY_BUFFER_SIZE ? COPY_BUFFER_SIZE : bytes_left;
+
+        size_t offset = i * COPY_BUFFER_SIZE;
+
+        SYSCALL_ERR_HANDLE(pread(src_fd, copy_buffer, copy_bytes, offset));
+
+        //SYSCALL_ERR_HANDLE
+    }
 
     return FCP_OK;
 }
 
 
-static FCP_ERROR assert_file_type(int fd) {
-    struct stat statbuf = {0};
-
-    SYSCALL_ERR_HANDLE(fstat(fd, &statbuf));
-
-    if ((statbuf.st_mode & S_IFMT) != S_IFREG) return FCP_BAD_FILE_TYPE;
+static FCP_ERROR assert_file_type(struct stat* sb) {
+    if ((sb->st_mode & S_IFMT) != S_IFREG) return FCP_BAD_FILE_TYPE;
 
     return FCP_OK;
 }
 
 
-static FCP_ERROR get_file_size(int fd, off_t* out) {
-    struct stat statbuf = {0};
-
-    SYSCALL_ERR_HANDLE(fstat(fd, &statbuf));
-
-    *out = statbuf.st_size;
+static FCP_ERROR get_file_size(struct stat* sb, off_t* out) {
+    *out = sb->st_size;
 
     return FCP_OK;
 }
