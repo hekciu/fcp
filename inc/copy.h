@@ -10,9 +10,13 @@ typedef struct {
     uint32_t queue_depth;
     const char* src;
     const char* dest;
-} copy_config_t;
+} fcp_copy_config_t;
 
-FCP_ERROR fcp_copy(copy_config_t* config);
+typedef struct {
+    uint64_t elapsed_ns;
+} fcp_copy_output_t;
+
+FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output);
 
 #endif
 

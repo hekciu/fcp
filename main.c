@@ -26,12 +26,15 @@ int main(int argc, char** argv) {
 
     if (argc < 3) fcp_exit(FCP_BAD_ARGUMENTS);
 
-    copy_config_t config = {0};
+    fcp_copy_config_t config = {0};
+    fcp_copy_output_t output = {0};
 
     config.src = argv[1];
     config.dest = argv[2];
 
-    HANDLE_ERROR(fcp_copy(&config));
+    HANDLE_ERROR(fcp_copy(&config, &output));
+
+    printf("elapsed: %llu nanoseconds\n", output.elapsed_ns);
 
     return 0;
 }

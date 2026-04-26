@@ -4,6 +4,7 @@
 
 #include "copy.h"
 #include "common.h"
+#include "timer.h"
 
 static FCP_ERROR assert_file_type(struct stat* sb);
 static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
@@ -12,17 +13,17 @@ static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
 static char copy_buffer[COPY_BUFFER_SIZE];
 
 
-FCP_ERROR fcp_copy(copy_config_t* config) {
+FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     int src_fd, dest_fd, read_args, write_args;
 
     read_args = O_RDONLY;
     // read_args |= O_DIRECT; // disable kernel caching
 
-    SYSCALL_ERR_HANDLE("open (read)", (src_fd = open(config->src, read_args)));
-
     write_args = O_WRONLY;
     write_args |= O_CREAT;
     // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
+
+    SYSCALL_ERR_HANDLE("open (read)", (src_fd = open(config->src, read_args)));
     mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
 
     SYSCALL_ERR_HANDLE("open (write)", (dest_fd = open(config->dest, write_args, write_mode)));
@@ -38,6 +39,10 @@ FCP_ERROR fcp_copy(copy_config_t* config) {
 
     size_t n_rounds = (src_size / COPY_BUFFER_SIZE) + 1;
 
+    /* timer start */
+    fcp_timer_t timer;
+    start_timer(&timer);
+
     for (int i = 0; i < n_rounds; i++) {
         size_t bytes_left = src_size - (i * COPY_BUFFER_SIZE);
 
@@ -49,6 +54,10 @@ FCP_ERROR fcp_copy(copy_config_t* config) {
 
         SYSCALL_ERR_HANDLE("pwrite", pwrite(dest_fd, copy_buffer, copy_bytes, offset));
     }
+
+    stop_timer(&timer);
+
+    output->elapsed_ns = timer.elapsed_ns;
 
     return FCP_OK;
 }
