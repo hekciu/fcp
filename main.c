@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
 
     HANDLE_ERROR(fcp_copy(&config, &output));
 
-    printf("elapsed: %llu nanoseconds\n", output.elapsed_ns);
+    fcp_print_time(output.elapsed_ns);
 
     return 0;
 }
