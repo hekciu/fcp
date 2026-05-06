@@ -6,7 +6,7 @@
 #include "error_codes.h"
 
 typedef struct {
-    uint32_t n_threads;
+    uint32_t threads;
     uint32_t queue_depth;
     const char* src;
     const char* dest;

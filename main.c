@@ -15,15 +15,22 @@ static struct option long_opt[] =
   {"help", no_argument, NULL, 'h'},
   {"input", required_argument, NULL, 'i'},
   {"output", required_argument, NULL, 'o'},
-  {"raw", required_argument, NULL, 'r'},
+  {"raw", no_argument, NULL, 'r'},
+  {"threads", required_argument, NULL, 't'},
+  {"queue_depth", required_argument, NULL, 'q'},
   {NULL, 0, NULL, 0}
 };
 
-static const char*  short_opt = "hior";
+static const char*  short_opt = "hiortq";
 
 int main(int argc, char** argv) {
     fcp_copy_config_t config = {0};
     fcp_copy_output_t output = {0};
+
+    /* defaults */
+    bool output_raw = false;
+    config.threads = 1;
+    config.queue_depth = 1;
 
     char c;
 
@@ -48,6 +55,15 @@ int main(int argc, char** argv) {
             break;
 
             case 'r':
+            output_raw = true;
+            break;
+
+            case 'q':
+            HANDLE_ERROR(fcp_parse_ul(argv[optind], &config.queue_depth));
+            break;
+
+            case 't':
+            HANDLE_ERROR(fcp_parse_ul(argv[optind], &config.threads));
             break;
 
             default:
@@ -58,6 +74,14 @@ int main(int argc, char** argv) {
     if (config.src == NULL || config.dest == NULL) fcp_exit(FCP_BAD_ARGUMENTS);
 
     HANDLE_ERROR(fcp_copy(&config, &output));
+
+    if (output_raw) {
+        printf("%llu", output.elapsed_ns);
+
+        return 0;
+    }
+
+    printf("number of threads: %lu, queue depth: %lu\n", config.threads, config.queue_depth);
 
     fcp_print_time(output.elapsed_ns);
 

@@ -47,3 +47,13 @@ void fcp_print_time(uint64_t elapsed_ns) {
         printf("elapsed time -> %llu ns\n", ns);
     }
 }
+
+FCP_ERROR fcp_parse_ul(const char* input, uint32_t* output) {
+    errno = 0;
+
+    *output = strtoul(input, NULL, 10);
+
+    if (errno != 0) return FCP_UINT32_PARSE_FAILED;
+
+    return FCP_OK;
+}
