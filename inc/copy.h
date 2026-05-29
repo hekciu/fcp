@@ -2,6 +2,7 @@
 #define COPY_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "error_codes.h"
 
@@ -10,6 +11,7 @@ typedef struct {
     uint32_t queue_depth;
     const char* src;
     const char* dest;
+    bool async;
 } fcp_copy_config_t;
 
 typedef struct {

@@ -30,7 +30,8 @@ int main(int argc, char** argv) {
     /* defaults */
     bool output_raw = false;
     config.threads = 1;
-    config.queue_depth = 1;
+    config.queue_depth = 0;
+    config.async = false;
 
     char c;
 
@@ -60,6 +61,7 @@ int main(int argc, char** argv) {
 
             case 'q':
             HANDLE_ERROR(fcp_parse_ul(argv[optind], &config.queue_depth));
+            config.async = true;
             break;
 
             case 't':
