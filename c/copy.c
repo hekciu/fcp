@@ -2,6 +2,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #include "copy.h"
 #include "common.h"
@@ -39,28 +40,52 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     HANDLE_ERROR(get_file_size(&src_sb, &src_size));
 
+    pthread_t* threads = malloc(sizeof(pthread_t) * config->threads);
+    copy_thread_params_t* threads_params = malloc(sizeof(copy_thread_params_t) * config->threads);
+
+    size_t bytes_per_section = (src_size / config->threads) + 1;
+
     /* timer start */
     fcp_timer_t timer;
     start_timer(&timer);
 
-    copy_thread_params_t params = {0};
+    for (size_t t_num = 0; t_num < config->threads; t_num++) {
+        copy_thread_params_t* params = threads_params + t_num;
+        pthread_t* thread = threads + t_num;
 
-    params.input = config->src;
-    params.output = config->dest;
-    params.offset = 0;
-    params.n_bytes = src_size;
+        size_t bytes_left = src_size - (t_num * bytes_per_section);
 
-    pthread_t pthread_1;
+        size_t copy_bytes = bytes_left > bytes_per_section ? bytes_per_section : bytes_left;
 
-    SYSCALL_ERR_HANDLE("pthread_create", pthread_create(&pthread_1,
-				   NULL, 
-				   copy_thread_callback,
-				   (void*)&params));
+        size_t offset = t_num * bytes_per_section;
 
-    pthread_join(pthread_1, NULL);
+        params->input = config->src;
+        params->output = config->dest;
+        params->offset = offset;
+        params->n_bytes = copy_bytes;
+
+        printf("pthread %i params:\ninput: %s\noutput: %s\n, offset: %lu\n, n_bytes: %lu\n",
+            t_num,
+            params->input,
+            params->output,
+            params->offset,
+            params->n_bytes);
+
+        SYSCALL_ERR_HANDLE("pthread_create", pthread_create(thread,
+                       NULL, 
+                       copy_thread_callback,
+                       (void*)params));
+    }
+
+    for (pthread_t* thread = threads; thread < (threads + config->threads); thread++) {
+        pthread_join(*thread, NULL);
+    }
 
     stop_timer(&timer);
     output->elapsed_ns = timer.elapsed_ns;
+
+    free(threads);
+    free(threads_params);
 
     return FCP_OK;
 }
@@ -86,9 +111,6 @@ static void* copy_thread_callback(void* copy_thread_params) {
 
     SYSCALL_ERR_HANDLE_PTHREAD("open (write)", (dest_fd = open(params->output, write_args, write_mode)));
 
-    struct stat src_sb = {0};
-    SYSCALL_ERR_HANDLE_PTHREAD("fstat", fstat(src_fd, &src_sb));
-
     size_t n_rounds = (params->n_bytes / COPY_BUFFER_SIZE) + 1;
 
     for (int i = 0; i < n_rounds; i++) {
@@ -96,7 +118,7 @@ static void* copy_thread_callback(void* copy_thread_params) {
 
         size_t copy_bytes = bytes_left > COPY_BUFFER_SIZE ? COPY_BUFFER_SIZE : bytes_left;
 
-        size_t offset = i * COPY_BUFFER_SIZE;
+        size_t offset = params->offset + i * COPY_BUFFER_SIZE;
 
         SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(src_fd, copy_buffer, copy_bytes, offset));
 
