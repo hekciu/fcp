@@ -1,8 +1,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <stdlib.h>
+
+#include <pthread.h>
+#include <aio.h>
 
 #include "copy.h"
 #include "common.h"
@@ -20,7 +22,8 @@ static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
 
 #define COPY_BUFFER_SIZE 2000
 
-static void* copy_thread_callback(void* copy_thread_params);
+static void* sync_copy_thread_callback(void* copy_thread_params);
+static void* async_copy_thread_callback(void* copy_thread_params);
 
 
 FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
@@ -64,17 +67,25 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         params->offset = offset;
         params->n_bytes = copy_bytes;
 
-        printf("pthread %i params:\ninput: %s\noutput: %s\n, offset: %lu\n, n_bytes: %lu\n",
+        printf("pthread %lu params:\ninput: %s\noutput: %s\n, offset: %lu\n, n_bytes: %lu\n",
             t_num,
             params->input,
             params->output,
             params->offset,
             params->n_bytes);
 
-        SYSCALL_ERR_HANDLE("pthread_create", pthread_create(thread,
-                       NULL, 
-                       copy_thread_callback,
-                       (void*)params));
+		if (config->async) {
+			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+						   NULL, 
+						   async_copy_thread_callback,
+						   (void*)params));
+		} else {
+			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+						   NULL, 
+						   sync_copy_thread_callback,
+						   (void*)params));
+		}
+
     }
 
     for (pthread_t* thread = threads; thread < (threads + config->threads); thread++) {
@@ -91,8 +102,12 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 }
 
 
+static void* async_copy_thread_callback(void* copy_thread_params) {
+}
 
-static void* copy_thread_callback(void* copy_thread_params) {
+
+
+static void* sync_copy_thread_callback(void* copy_thread_params) {
     char copy_buffer[COPY_BUFFER_SIZE];
 
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
