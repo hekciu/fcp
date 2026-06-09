@@ -8,14 +8,15 @@
 
 #include "error_codes.h"
 
+
 void fcp_exit(FCP_ERROR err);
 void fcp_print_help_message();
 void fcp_print_time(uint64_t elapsed_ns);
 FCP_ERROR fcp_parse_ul(const char* input, uint32_t* output);
 
-#define SYSCALL_ERR_HANDLE(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerrordesc_np(errno));return FCP_SYSCALL_FAILED;} } while(0)
+#define SYSCALL_ERR_HANDLE(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerror(errno));return FCP_SYSCALL_FAILED;} } while(0)
 
-#define SYSCALL_ERR_HANDLE_PTHREAD(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerrordesc_np(errno));return (void*)FCP_SYSCALL_FAILED;} } while(0)
+#define SYSCALL_ERR_HANDLE_PTHREAD(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerror(errno));return (void*)FCP_SYSCALL_FAILED;} } while(0)
 
 #define HANDLE_ERROR(call) \
 { \

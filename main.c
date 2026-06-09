@@ -78,12 +78,12 @@ int main(int argc, char** argv) {
     HANDLE_ERROR(fcp_copy(&config, &output));
 
     if (output_raw) {
-        printf("%llu", output.elapsed_ns);
+        printf("%lu", output.elapsed_ns);
 
         return 0;
     }
 
-    printf("number of threads: %lu, queue depth: %lu\n", config.threads, config.queue_depth);
+    printf("number of threads: %u, queue depth: %u\n", config.threads, config.queue_depth);
 
     fcp_print_time(output.elapsed_ns);
 

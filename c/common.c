@@ -34,17 +34,17 @@ void fcp_print_time(uint64_t elapsed_ns) {
     uint64_t ns = elapsed_ns;
 
     if (h > 0) {
-        printf("elapsed time -> %llu h %llu m %llu s %llu ms %llu us %llu ns\n", h, m, s, ms, us, ns);
+        printf("elapsed time -> %lu h %lu m %lu s %lu ms %lu us %lu ns\n", h, m, s, ms, us, ns);
     } else if (m > 0) {
-        printf("elapsed time -> %llu m %llu s %llu ms %llu us %llu ns\n", m, s, ms, us, ns);
+        printf("elapsed time -> %lu m %lu s %lu ms %lu us %lu ns\n", m, s, ms, us, ns);
     } else if (s > 0) {
-        printf("elapsed time -> %llu s %llu ms %llu us %llu ns\n", s, ms, us, ns);
+        printf("elapsed time -> %lu s %lu ms %lu us %lu ns\n", s, ms, us, ns);
     } else  if (ms > 0) {
-        printf("elapsed time -> %llu ms %llu us %llu ns\n", ms, us, ns);
+        printf("elapsed time -> %lu ms %lu us %lu ns\n", ms, us, ns);
     } else if (us > 0) {
-        printf("elapsed time -> %llu us %llu ns\n", us, ns);
+        printf("elapsed time -> %lu us %lu ns\n", us, ns);
     } else {
-        printf("elapsed time -> %llu ns\n", ns);
+        printf("elapsed time -> %lu ns\n", ns);
     }
 }
 
