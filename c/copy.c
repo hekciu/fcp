@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 #include <pthread.h>
-#include <aio.h>
+#include <libaio.h>
 
 #include "copy.h"
 #include "common.h"
@@ -15,6 +15,7 @@ typedef struct {
     const char* output;
     size_t offset;
     off_t n_bytes;
+	uint32_t queue_depth;
 } copy_thread_params_t;
 
 static FCP_ERROR assert_file_type(struct stat* sb);
@@ -66,6 +67,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         params->output = config->dest;
         params->offset = offset;
         params->n_bytes = copy_bytes;
+        params->queue_depth = config->queue_depth;
 
         printf("pthread %lu params:\ninput: %s\noutput: %s\n, offset: %lu\n, n_bytes: %lu\n",
             t_num,
@@ -103,6 +105,14 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
 
 static void* async_copy_thread_callback(void* copy_thread_params) {
+    copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
+
+	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
+	io_context_t io_context;
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_setup from libaio", io_setup(maxevents, &io_context));
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy from libaio", io_destroy(io_context));
 }
 
 
