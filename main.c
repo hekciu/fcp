@@ -48,11 +48,11 @@ int main(int argc, char** argv) {
             break;
 
             case 'i':
-            config.src = argv[optind];
+            config.src = optarg;
             break;
 
             case 'o':
-            config.dest = argv[optind];
+            config.dest = optarg;
             break;
 
             case 'r':
@@ -60,12 +60,12 @@ int main(int argc, char** argv) {
             break;
 
             case 'q':
-            HANDLE_ERROR(fcp_parse_ul(argv[optind], &config.queue_depth));
+            HANDLE_ERROR(fcp_parse_ul(optarg, &config.queue_depth));
             config.async = true;
             break;
 
             case 't':
-            HANDLE_ERROR(fcp_parse_ul(argv[optind], &config.threads));
+            HANDLE_ERROR(fcp_parse_ul(optarg, &config.threads));
             break;
 
             default:
@@ -83,6 +83,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+	printf("input: '%s', output: '%s'\n", config.src, config.dest);
     printf("number of threads: %u, queue depth: %u\n", config.threads, config.queue_depth);
 
     fcp_print_time(output.elapsed_ns);

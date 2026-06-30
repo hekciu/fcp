@@ -112,6 +112,10 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_setup from libaio", io_setup(maxevents, &io_context));
 
+	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
+
+	}
+
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy from libaio", io_destroy(io_context));
 }
 
