@@ -21,8 +21,6 @@ typedef struct {
 static FCP_ERROR assert_file_type(struct stat* sb);
 static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
 
-#define COPY_BUFFER_SIZE 2000
-
 static void* sync_copy_thread_callback(void* copy_thread_params);
 static void* async_copy_thread_callback(void* copy_thread_params);
 
@@ -69,12 +67,14 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
 
-        printf("pthread %lu params:\ninput: %s\noutput: %s\n, offset: %lu\n, n_bytes: %lu\n",
+		/*
+        printf("pthread %lu params:\ninput: %s\noutput: %s\noffset: %lu\nn_bytes: %lu\n",
             t_num,
             params->input,
             params->output,
             params->offset,
             params->n_bytes);
+		*/
 
 		if (config->async) {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
@@ -107,10 +107,19 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 static void* async_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
 
+	/* TODO: memory leak below! */
+	uint8_t* copy_buffer = malloc(params->n_bytes);
+
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 	io_context_t io_context;
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_setup from libaio", io_setup(maxevents, &io_context));
+
+	/*
+	/\ allocate buffer for whole data from one thread
+	/\ allocate all configs for read operations 
+	/\ allocate all configs for write operations 
+	*/
 
 	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
 
@@ -122,9 +131,10 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 
 static void* sync_copy_thread_callback(void* copy_thread_params) {
-    char copy_buffer[COPY_BUFFER_SIZE];
-
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
+
+	/* TODO: memory leak below! */
+	uint8_t* copy_buffer = malloc(params->n_bytes);
 
     int src_fd, dest_fd, read_args, write_args;
 
@@ -140,19 +150,9 @@ static void* sync_copy_thread_callback(void* copy_thread_params) {
 
     SYSCALL_ERR_HANDLE_PTHREAD("open (write)", (dest_fd = open(params->output, write_args, write_mode)));
 
-    size_t n_rounds = (params->n_bytes / COPY_BUFFER_SIZE) + 1;
+	SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(src_fd, copy_buffer, params->n_bytes, params->offset));
 
-    for (int i = 0; i < n_rounds; i++) {
-        size_t bytes_left = params->n_bytes - (i * COPY_BUFFER_SIZE);
-
-        size_t copy_bytes = bytes_left > COPY_BUFFER_SIZE ? COPY_BUFFER_SIZE : bytes_left;
-
-        size_t offset = params->offset + i * COPY_BUFFER_SIZE;
-
-        SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(src_fd, copy_buffer, copy_bytes, offset));
-
-        SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(dest_fd, copy_buffer, copy_bytes, offset));
-    }
+	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(dest_fd, copy_buffer, params->n_bytes, params->offset));
 
     return (void*)FCP_OK;
 }
