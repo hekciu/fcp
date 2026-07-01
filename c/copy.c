@@ -110,22 +110,77 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	/* TODO: memory leak below! */
 	uint8_t* copy_buffer = malloc(params->n_bytes);
 
+    int src_fd, dest_fd, read_args, write_args;
+
+    read_args = O_RDONLY;
+    // read_args |= O_DIRECT; // disable kernel caching
+
+    write_args = O_WRONLY;
+    write_args |= O_CREAT;
+    // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
+
+    SYSCALL_ERR_HANDLE_PTHREAD("open (read)", (src_fd = open(params->input, read_args)));
+    mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
+
+    SYSCALL_ERR_HANDLE_PTHREAD("open (write)", (dest_fd = open(params->output, write_args, write_mode)));
+
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
-	io_context_t io_context;
 
-	SYSCALL_ERR_HANDLE_PTHREAD("io_setup from libaio", io_setup(maxevents, &io_context));
+	io_context_t io_context_read, io_context_write;
 
-	/*
-	/\ allocate buffer for whole data from one thread
-	/\ allocate all configs for read operations 
-	/\ allocate all configs for write operations 
-	*/
+	SYSCALL_ERR_HANDLE_PTHREAD("io_setup io_context_read", io_setup(maxevents, &io_context_read));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_setup io_context_write", io_setup(maxevents, &io_context_write));
 
-	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
+	/* TODO: memory leak below! */
+	struct iocb* read_configs = calloc(maxevents, sizeof(struct iocb));
+	/* TODO: memory leak below! */
+	struct iocb* write_configs = calloc(maxevents, sizeof(struct iocb));
 
+	/* TODO: memory leak below! */
+	struct io_event* read_events = calloc(maxevents, sizeof(struct io_event));
+	/* TODO: memory leak below! */
+	struct io_event* write_events = calloc(maxevents, sizeof(struct io_event));
+
+	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+
+	for (int n = 0; n < maxevents; n++) {
+		struct iocb* cur_iocb_read = read_configs + n;
+		struct iocb* cur_iocb_write = read_configs + n;
+		size_t offset = params->offset + n * bytes_per_call;
+		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - offset) : bytes_per_call;
+
+		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + offset, copy_bytes, offset);
+		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + offset, copy_bytes, offset);
 	}
 
-	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy from libaio", io_destroy(io_context));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(io_context_read, maxevents, &read_configs));
+
+	struct timespec timespec_zeros = {
+		.tv_sec = 0,
+		.tv_nsec = 0
+	};
+
+	/* TODO: memory leak below! */
+	bool* was_read_finished = calloc(sizeof(bool) * maxevents);
+
+
+	while(io_getevents(io_context_read, 0, &read_events, timespec_zeros) < maxevents) {
+		for (int num_ev = 0; num_ev < maxevents; num_ev++) {
+			io_event* ev = read_events + num_ev;
+
+			/\ You need to check for completion of event (res? res2? what will it be when it's in progress?)
+			if (*(was_read_finished + num_ev)) {
+				*(was_read_finished + num_ev) = true;
+
+				SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, &(write_configs + num_ev)));
+			}
+		}
+	}
+
+	io_getevents(io_context_read, maxevents, &read_events, 0);
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(io_context_read));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(io_context_write));
 }
 
 
