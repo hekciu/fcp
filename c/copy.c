@@ -72,15 +72,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
 
-		/*
-        printf("pthread %lu params:\ninput: %s\noutput: %s\noffset: %lu\nn_bytes: %lu\n",
-            t_num,
-            params->input,
-            params->output,
-            params->offset,
-            params->n_bytes);
-		*/
-
 		if (config->async) {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
@@ -113,7 +104,11 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
 
 	/* TODO: memory leak below! */
-	uint8_t* copy_buffer = malloc(params->n_bytes);
+	// uint8_t* copy_buffer = malloc(params->n_bytes);
+
+	uint8_t* copy_buffer = NULL;
+
+	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->n_bytes, params->n_bytes));
 
     int src_fd, dest_fd, read_args, write_args;
 
@@ -163,6 +158,8 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 		(copy_states + n)->n_bytes = copy_bytes;
 
+		printf("io pread -> position in copy buffer: %ld, n_bytes: %ld, offset: %ld\n",(size_t)(copy_buffer + relative_offset), copy_bytes, offset); 
+
 		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + relative_offset, copy_bytes, offset);
 		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
 
@@ -179,20 +176,29 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	size_t read_events_done = 0;
 
 	while(read_events_done < maxevents) {
-		read_events_done = io_getevents(io_context_read, 0, maxevents, read_events, &timespec_zeros);
+		// printf("read events done: %ld\n", read_events_done);
+
+		size_t _ = io_getevents(io_context_read, 0, maxevents, read_events, &timespec_zeros);
+
+		read_events_done = 0;
 
 		for (int num_ev = 0; num_ev < maxevents; num_ev++) {
 			struct io_event* ev = read_events + num_ev;
 
 			async_copy_item_t* copy_state = copy_states + num_ev;
 
-			if (ev->res < copy_state->n_bytes) continue;
+			if (copy_state->was_read_finished) {
+				read_events_done++;
 
-			if (copy_state->was_read_finished) continue;
+				continue;
+			}
+
+			if (ev->res < copy_state->n_bytes) continue;
 
 			copy_state->was_read_finished = true;
 
-			printf("submitting write event in num_ev %d\n", num_ev);
+			printf("submitting event %d\n", num_ev);
+
 			SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_ev)));
 		}
 	}
