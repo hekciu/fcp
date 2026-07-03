@@ -178,29 +178,25 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	while(read_events_done < maxevents) {
 		// printf("read events done: %ld\n", read_events_done);
 
-		size_t _ = io_getevents(io_context_read, 0, maxevents, read_events, &timespec_zeros);
+		int cur_read_events_done = io_getevents(io_context_read, 1, maxevents, read_events, &timespec_zeros);
+		read_events_done += cur_read_events_done;
 
-		read_events_done = 0;
+		for (int num_cur_ev = 0; num_cur_ev < cur_read_events_done; num_cur_ev++) {
+			struct io_event* ev = read_events + num_cur_ev;
 
-		for (int num_ev = 0; num_ev < maxevents; num_ev++) {
-			struct io_event* ev = read_events + num_ev;
+			for (int num_conf = 0; num_conf < maxevents; num_conf++) {
+				struct iocb* cur_iocb_read = read_configs + num_conf;
 
-			async_copy_item_t* copy_state = copy_states + num_ev;
+				if (cur_iocb_read->data != ev->data) continue;
 
-			if (copy_state->was_read_finished) {
-				read_events_done++;
+				printf("submitting event %d\n", num_conf);
 
-				continue;
+				// TODO: check for ev->res (number of bytes written)
+				SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
+
 			}
-
-			if (ev->res < copy_state->n_bytes) continue;
-
-			copy_state->was_read_finished = true;
-
-			printf("submitting event %d\n", num_ev);
-
-			SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_ev)));
 		}
+
 	}
 
 	io_getevents(io_context_write, maxevents, maxevents, write_events, 0);
