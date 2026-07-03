@@ -18,6 +18,11 @@ typedef struct {
 	uint32_t queue_depth;
 } copy_thread_params_t;
 
+typedef struct {
+	size_t n_bytes;
+	bool was_read_finished;
+} async_copy_item_t;
+
 static FCP_ERROR assert_file_type(struct stat* sb);
 static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
 
@@ -143,11 +148,16 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
 
+	/* TODO: memory leak below! */
+	async_copy_item_t* copy_states = calloc(maxevents, sizeof(async_copy_item_t));
+
 	for (int n = 0; n < maxevents; n++) {
 		struct iocb* cur_iocb_read = read_configs + n;
 		struct iocb* cur_iocb_write = read_configs + n;
 		size_t offset = params->offset + n * bytes_per_call;
 		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - offset) : bytes_per_call;
+
+		(copy_states + n)->n_bytes = copy_bytes;
 
 		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + offset, copy_bytes, offset);
 		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + offset, copy_bytes, offset);
@@ -160,24 +170,25 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 		.tv_nsec = 0
 	};
 
-	/* TODO: memory leak below! */
-	bool* was_read_finished = calloc(sizeof(bool) * maxevents);
-
-
-	while(io_getevents(io_context_read, 0, &read_events, timespec_zeros) < maxevents) {
+	while(io_getevents(io_context_read, 0, maxevents, read_events, &timespec_zeros) < maxevents) {
 		for (int num_ev = 0; num_ev < maxevents; num_ev++) {
-			io_event* ev = read_events + num_ev;
+			struct io_event* ev = read_events + num_ev;
 
-			/\ You need to check for completion of event (res? res2? what will it be when it's in progress?)
-			if (*(was_read_finished + num_ev)) {
-				*(was_read_finished + num_ev) = true;
+			async_copy_item_t* copy_state = copy_states + num_ev;
 
-				SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, &(write_configs + num_ev)));
-			}
+			if (ev->res < copy_state->n_bytes) continue;
+
+			if (copy_state->was_read_finished) continue;
+
+			copy_state->was_read_finished = true;
+
+			struct iocb* conf = write_configs + num_ev; // TODO: scary, possible segfault
+
+			SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, &conf));
 		}
 	}
 
-	io_getevents(io_context_read, maxevents, &read_events, 0);
+	io_getevents(io_context_write, maxevents, maxevents, write_events, 0);
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(io_context_read));
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(io_context_write));
