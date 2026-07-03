@@ -151,16 +151,22 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	/* TODO: memory leak below! */
 	async_copy_item_t* copy_states = calloc(maxevents, sizeof(async_copy_item_t));
 
+	/* TODO: memory leak below! */
+	struct iocb** write_configs_ptrs = calloc(maxevents, sizeof(struct iocb*));
+
 	for (int n = 0; n < maxevents; n++) {
 		struct iocb* cur_iocb_read = read_configs + n;
-		struct iocb* cur_iocb_write = read_configs + n;
-		size_t offset = params->offset + n * bytes_per_call;
-		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - offset) : bytes_per_call;
+		struct iocb* cur_iocb_write = write_configs + n;
+		size_t relative_offset = n * bytes_per_call;
+		size_t offset = params->offset + relative_offset;
+		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
 
 		(copy_states + n)->n_bytes = copy_bytes;
 
-		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + offset, copy_bytes, offset);
-		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + offset, copy_bytes, offset);
+		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + relative_offset, copy_bytes, offset);
+		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
+
+		*(write_configs_ptrs + n) = cur_iocb_write;
 	}
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(io_context_read, maxevents, &read_configs));
@@ -170,7 +176,11 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 		.tv_nsec = 0
 	};
 
-	while(io_getevents(io_context_read, 0, maxevents, read_events, &timespec_zeros) < maxevents) {
+	size_t read_events_done = 0;
+
+	while(read_events_done < maxevents) {
+		read_events_done = io_getevents(io_context_read, 0, maxevents, read_events, &timespec_zeros);
+
 		for (int num_ev = 0; num_ev < maxevents; num_ev++) {
 			struct io_event* ev = read_events + num_ev;
 
@@ -182,9 +192,8 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 			copy_state->was_read_finished = true;
 
-			struct iocb* conf = write_configs + num_ev; // TODO: scary, possible segfault
-
-			SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, &conf));
+			printf("submitting write event in num_ev %d\n", num_ev);
+			SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_ev)));
 		}
 	}
 
