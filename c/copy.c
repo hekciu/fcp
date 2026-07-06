@@ -110,7 +110,7 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->n_bytes, params->n_bytes));
 
-    int src_fd, dest_fd, read_args, write_args;
+    int read_args, write_args;
 
     read_args = O_RDONLY;
     // read_args |= O_DIRECT; // disable kernel caching
@@ -119,10 +119,7 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
     write_args |= O_CREAT;
     // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
 
-    SYSCALL_ERR_HANDLE_PTHREAD("open (read)", (src_fd = open(params->input, read_args)));
     mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
-
-    SYSCALL_ERR_HANDLE_PTHREAD("open (write)", (dest_fd = open(params->output, write_args, write_mode)));
 
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 
@@ -158,7 +155,11 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 		(copy_states + n)->n_bytes = copy_bytes;
 
-		printf("io pread -> position in copy buffer: %ld, n_bytes: %ld, offset: %ld\n",(size_t)(copy_buffer + relative_offset), copy_bytes, offset); 
+		int src_fd, dest_fd;
+		SYSCALL_ERR_HANDLE_PTHREAD("open (read)", (src_fd = open(params->input, read_args)));
+		SYSCALL_ERR_HANDLE_PTHREAD("open (write)", (dest_fd = open(params->output, write_args, write_mode)));
+
+		printf("io pread -> src_fd: %d, dest_fd: %d, pos in cp bfr: %ld, n_bytes: %ld, offset: %ld\n",src_fd, dest_fd, (size_t)(copy_buffer + relative_offset), copy_bytes, offset); 
 
 		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + relative_offset, copy_bytes, offset);
 		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
@@ -176,20 +177,25 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	size_t read_events_done = 0;
 
 	while(read_events_done < maxevents) {
-		// printf("read events done: %ld\n", read_events_done);
+		int _ = io_getevents(io_context_read, 0, maxevents, read_events, &timespec_zeros);
 
-		int cur_read_events_done = io_getevents(io_context_read, 1, maxevents, read_events, &timespec_zeros);
-		read_events_done += cur_read_events_done;
-
-		for (int num_cur_ev = 0; num_cur_ev < cur_read_events_done; num_cur_ev++) {
+		for (int num_cur_ev = 0; num_cur_ev < maxevents; num_cur_ev++) {
 			struct io_event* ev = read_events + num_cur_ev;
+
+			// if ((copy_states + num_cur_ev)->) continue;
 
 			for (int num_conf = 0; num_conf < maxevents; num_conf++) {
 				struct iocb* cur_iocb_read = read_configs + num_conf;
 
-				if (cur_iocb_read->data != ev->data) continue;
+				if (cur_iocb_read != ev->obj) continue;
 
-				printf("submitting event %d\n", num_conf);
+				if ((copy_states + num_conf)->was_read_finished) continue;
+
+				if (ev->res < (copy_states + num_conf)->n_bytes) continue;
+
+				(copy_states + num_conf)->was_read_finished = true;
+				printf("submitting event %d data: %p \n", num_conf, cur_iocb_read->data);
+				read_events_done++;
 
 				// TODO: check for ev->res (number of bytes written)
 				SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
