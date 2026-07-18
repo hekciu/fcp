@@ -100,10 +100,8 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 }
 
 
-static void libaio_read_cb(io_context_t ctx, struct iocb *iocb, long res, long res2);
-
-
 static struct iocb** write_configs_ptrs = NULL;
+static struct iocb** read_configs_ptrs = NULL;
 
 static io_context_t io_context_read = 0;
 static io_context_t io_context_write = 0;
@@ -122,7 +120,7 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
     int read_args, write_args;
 
     read_args = O_RDONLY;
-    read_args |= O_DIRECT; // disable kernel caching
+    // read_args |= O_DIRECT; // disable kernel caching
 
     write_args = O_WRONLY;
     write_args |= O_CREAT;
@@ -153,6 +151,7 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 	/* TODO: memory leak below! */
 	write_configs_ptrs = calloc(maxevents, sizeof(struct iocb*));
+	read_configs_ptrs = calloc(maxevents, sizeof(struct iocb*));
 
 	int src_fd, dest_fd;
 	SYSCALL_ERR_HANDLE_PTHREAD("open (read)", (src_fd = open(params->input, read_args)));
@@ -168,15 +167,52 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + relative_offset, copy_bytes, offset);
 		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
 
-		io_set_callback(cur_iocb_read, libaio_read_cb);
 		*(write_configs_ptrs + n) = cur_iocb_write;
-
-		cur_iocb_read->data = (void*)((int)n);
+		*(read_configs_ptrs + n) = cur_iocb_read;
 	}
 
-	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(io_context_read, maxevents, &read_configs));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(io_context_read, maxevents, read_configs_ptrs));
 
+	struct timespec timespec_zeros = {
+		.tv_sec = 0,
+		.tv_nsec = 0
+	};
 
+	size_t read_events_done = 0;
+	
+	char* debug_string = malloc(params->n_bytes + 1);
+	*(debug_string + params->n_bytes) = '\0';
+
+	while(read_events_done < maxevents) {
+		// printf("read events done: %ld\n", read_events_done);
+		memcpy(debug_string, copy_buffer, params->n_bytes);
+		printf("%s\n", debug_string);
+	
+		int cur_read_events_done = io_getevents(io_context_read, 1, maxevents, read_events, &timespec_zeros);
+
+		if (cur_read_events_done != 0) printf("cur read events done: %d\n", cur_read_events_done);
+
+		SYSCALL_ERR_HANDLE_PTHREAD("[value] cur_read_events_done", cur_read_events_done);
+
+		read_events_done += cur_read_events_done;
+	
+		for (int num_cur_ev = 0; num_cur_ev < cur_read_events_done; num_cur_ev++) {
+			struct io_event* ev = read_events + num_cur_ev;
+	
+			for (int num_conf = 0; num_conf < maxevents; num_conf++) {
+				struct iocb* cur_iocb_read = read_configs + num_conf;
+	
+				if (cur_iocb_read->data != ev->data) continue;
+	
+				printf("submitting event %d\n", num_conf);
+	
+				// TODO: check for ev->res (number of bytes written)
+				SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
+	
+			}
+		}
+	
+	}
 
 	io_getevents(io_context_write, maxevents, maxevents, write_events, 0);
 
@@ -211,43 +247,6 @@ static void* sync_copy_thread_callback(void* copy_thread_params) {
 	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(dest_fd, copy_buffer, params->n_bytes, params->offset));
 
     return (void*)FCP_OK;
-}
-
-
-
-static void libaio_read_cb(io_context_t ctx, struct iocb *iocb, long res, long res2) {
-	printf("libaio callback!\n");
-	/*
-	for (int num_conf = 0; num_conf < maxevents; num_conf++) {
-		struct iocb* cur_iocb_read = read_configs + num_conf;
-
-		if (cur_iocb_read != ev->obj) continue;
-
-		if ((copy_states + num_conf)->was_read_finished) continue;
-
-		printf("event %d res: %lu res2: %lu  bytes expected: %ld\n", num_conf, ev->res, ev->res2, (copy_states + num_conf)->n_bytes);
-
-		SYSCALL_ERR_HANDLE_PTHREAD("ev->res (pread libaio)", ev->res);
-
-		if (ev->res < (copy_states + num_conf)->n_bytes) continue;
-
-		(copy_states + num_conf)->was_read_finished = true;
-		printf("submitting event %d data: %p \n", num_conf, cur_iocb_read->data);
-		read_events_done++;
-
-		// TODO: check for ev->res (number of bytes written)
-		SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
-
-	}
-	*/
-
-	int num_conf = (int)(iocb->data);
-	size_t should_write = iocb->u.c.nbytes;
-	size_t wrote = res;
-
-	int response_submit = io_submit(io_context_write, 1, write_configs_ptrs + num_conf);
-
-	printf("callback nr %d, should write: %lu, wrote: %lu, io_submit response: %d\n", num_conf, should_write, wrote, response_submit);
 }
 
 
