@@ -167,6 +167,9 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + relative_offset, copy_bytes, offset);
 		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
 
+		cur_iocb_read->data = (void*)(size_t)n;
+		cur_iocb_write->data = (void*)(size_t)n;
+
 		*(write_configs_ptrs + n) = cur_iocb_write;
 		*(read_configs_ptrs + n) = cur_iocb_read;
 	}
@@ -179,41 +182,22 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	};
 
 	size_t read_events_done = 0;
-	
-	char* debug_string = malloc(params->n_bytes + 1);
-	*(debug_string + params->n_bytes) = '\0';
 
-	while(read_events_done < maxevents) {
-		// printf("read events done: %ld\n", read_events_done);
-		memcpy(debug_string, copy_buffer, params->n_bytes);
-		printf("%s\n", debug_string);
-	
-		int cur_read_events_done = io_getevents(io_context_read, 1, maxevents, read_events, &timespec_zeros);
+	for(int i = 0; i < maxevents; i++) {
+		struct io_event* ev = malloc(sizeof(struct io_event));
+		SYSCALL_ERR_HANDLE_PTHREAD("io_getevents (read)", io_getevents(io_context_read, 1, 1, ev, 0));
 
-		if (cur_read_events_done != 0) printf("cur read events done: %d\n", cur_read_events_done);
+		size_t num_conf = (size_t)ev->data;
 
-		SYSCALL_ERR_HANDLE_PTHREAD("[value] cur_read_events_done", cur_read_events_done);
+		struct iocb* iocb_write = *(write_configs_ptrs + num_conf);
 
-		read_events_done += cur_read_events_done;
-	
-		for (int num_cur_ev = 0; num_cur_ev < cur_read_events_done; num_cur_ev++) {
-			struct io_event* ev = read_events + num_cur_ev;
-	
-			for (int num_conf = 0; num_conf < maxevents; num_conf++) {
-				struct iocb* cur_iocb_read = read_configs + num_conf;
-	
-				if (cur_iocb_read->data != ev->data) continue;
-	
-				printf("submitting event %d\n", num_conf);
-	
-				// TODO: check for ev->res (number of bytes written)
-				SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
-	
-			}
-		}
-	
+		printf("NUM CONF: %ld\n", num_conf);
+		printf("number from iocb_write->data: %ld\n", (size_t)iocb_write->data);
+
+		SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
 	}
 
+	printf("getting them events\n");
 	io_getevents(io_context_write, maxevents, maxevents, write_events, 0);
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(io_context_read));
