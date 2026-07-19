@@ -29,4 +29,7 @@ ${BUILD_DIR}:
 clean:
 	rm -rf ${BUILD_DIR}
 
-.PHONY: all clean
+install:
+	cp ./fcp /usr/bin/fcp
+
+.PHONY: all clean install

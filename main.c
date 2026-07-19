@@ -5,10 +5,15 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <sys/stat.h>
 
 #include "error_codes.h"
 #include "common.h"
 #include "copy.h"
+
+
+/* File-system related */
+#define FS_BLOCK_SIZE 4096
 
 static struct option long_opt[] =
 {
@@ -32,6 +37,7 @@ int main(int argc, char** argv) {
     config.threads = 1;
     config.queue_depth = 0;
     config.async = false;
+	config.fs_block_size = FS_BLOCK_SIZE;
 
     char c;
 
@@ -74,6 +80,19 @@ int main(int argc, char** argv) {
     }
 
     if (config.src == NULL || config.dest == NULL) fcp_exit(FCP_BAD_ARGUMENTS);
+
+	struct stat input_stat = {0};
+	SYSCALL_ERR_HANDLE("stat", stat(config.src, &input_stat));
+
+	if ((input_stat.st_size % config.fs_block_size) != 0) {
+		fprintf(stderr, "file size must be divisible by %ld, got %ld\n", config.fs_block_size, input_stat.st_size);
+		return FCP_BAD_FILE_SIZE;
+	}
+	
+	if ((config.fs_block_size % sizeof(void*)) != 0) {
+		fprintf(stderr, "fs block size must be divisible by sizeof(void*): %ld, got %ld\n", sizeof(void*), config.fs_block_size);
+		return FCP_BAD_FILE_SIZE;
+	}
 
     HANDLE_ERROR(fcp_copy(&config, &output));
 

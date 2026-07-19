@@ -191,13 +191,6 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 		struct iocb* iocb_write = *(write_configs_ptrs + num_conf);
 
-		printf("NUM CONF: %ld\n", num_conf);
-		printf("number from iocb_write->data: %ld\n", (size_t)iocb_write->data);
-		char* debug_string = malloc(params->n_bytes + 1);
-		*(debug_string + params->n_bytes) = '\0';
-		memcpy(debug_string, copy_buffer, params->n_bytes);
-		printf("debug string: %s\n", debug_string);
-
 		SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
 	}
 

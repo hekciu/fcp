@@ -12,6 +12,7 @@ typedef struct {
     const char* src;
     const char* dest;
     bool async;
+	size_t fs_block_size;
 } fcp_copy_config_t;
 
 typedef struct {
