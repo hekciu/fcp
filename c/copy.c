@@ -11,8 +11,8 @@
 #include "timer.h"
 
 typedef struct {
-    const char* input;
-    const char* output;
+	int src_fd;
+	int dest_fd;
     size_t offset;
     off_t n_bytes;
 	uint32_t queue_depth;
@@ -32,11 +32,20 @@ static void* async_copy_thread_callback(void* copy_thread_params);
 
 
 FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
-    int src_fd, read_args;
+    int src_fd, dest_fd, read_args, write_args;
 
     read_args = O_RDONLY;
+    read_args |= O_DIRECT; // disable kernel caching
+
+    write_args = O_WRONLY;
+    write_args |= O_CREAT;
+	write_args |= O_DIRECT;
+    // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
 
     SYSCALL_ERR_HANDLE("open (read)", (src_fd = open(config->src, read_args)));
+    mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
+
+    SYSCALL_ERR_HANDLE("open (write)", (dest_fd = open(config->dest, write_args, write_mode)));
 
     struct stat src_sb = {0};
     SYSCALL_ERR_HANDLE("fstat", fstat(src_fd, &src_sb));
@@ -66,8 +75,8 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
         size_t offset = t_num * bytes_per_section;
 
-        params->input = config->src;
-        params->output = config->dest;
+        params->src_fd = src_fd;
+        params->dest_fd = dest_fd;
         params->offset = offset;
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
@@ -116,18 +125,6 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	/* TODO: memory leak below! */
 	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
 
-    int read_args, write_args;
-
-    read_args = O_RDONLY;
-    //read_args |= O_DIRECT; // disable kernel caching
-
-    write_args = O_WRONLY;
-    write_args |= O_CREAT;
-    //write_args |= O_DIRECT; // disable kernel caching
-    // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
-
-    mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
-
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_setup io_context_read", io_setup(maxevents, &io_context_read));
@@ -152,10 +149,6 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	write_configs_ptrs = calloc(maxevents, sizeof(struct iocb*));
 	read_configs_ptrs = calloc(maxevents, sizeof(struct iocb*));
 
-	int src_fd, dest_fd;
-	SYSCALL_ERR_HANDLE_PTHREAD("open (read)", (src_fd = open(params->input, read_args)));
-	SYSCALL_ERR_HANDLE_PTHREAD("open (write)", (dest_fd = open(params->output, write_args, write_mode)));
-
 	for (int n = 0; n < maxevents; n++) {
 		struct iocb* cur_iocb_read = read_configs + n;
 		struct iocb* cur_iocb_write = write_configs + n;
@@ -163,8 +156,8 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 		size_t offset = params->offset + relative_offset;
 		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
 
-		io_prep_pread(cur_iocb_read, src_fd, copy_buffer + relative_offset, copy_bytes, offset);
-		io_prep_pwrite(cur_iocb_write, dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
+		io_prep_pread(cur_iocb_read, params->src_fd, copy_buffer + relative_offset, copy_bytes, offset);
+		io_prep_pwrite(cur_iocb_write, params->dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
 
 		cur_iocb_read->data = (void*)(size_t)n;
 		cur_iocb_write->data = (void*)(size_t)n;
@@ -209,24 +202,9 @@ static void* sync_copy_thread_callback(void* copy_thread_params) {
 	/* TODO: memory leak below! */
 	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
 
-    int src_fd, dest_fd, read_args, write_args;
+	SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(params->src_fd, copy_buffer, params->n_bytes, params->offset));
 
-    read_args = O_RDONLY;
-    read_args |= O_DIRECT; // disable kernel caching
-
-    write_args = O_WRONLY;
-    write_args |= O_CREAT;
-	write_args |= O_DIRECT;
-    // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
-
-    SYSCALL_ERR_HANDLE_PTHREAD("open (read)", (src_fd = open(params->input, read_args)));
-    mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
-
-    SYSCALL_ERR_HANDLE_PTHREAD("open (write)", (dest_fd = open(params->output, write_args, write_mode)));
-
-	SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(src_fd, copy_buffer, params->n_bytes, params->offset));
-
-	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(dest_fd, copy_buffer, params->n_bytes, params->offset));
+	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(params->dest_fd, copy_buffer, params->n_bytes, params->offset));
 
     return (void*)FCP_OK;
 }
