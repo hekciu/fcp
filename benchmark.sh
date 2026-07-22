@@ -28,9 +28,9 @@ head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
 echo "copying file to $DESTINATION_FILE"
 
 if [ "$ASYNCHRONOUS" = "1" ]; then
-	fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH
 else
-	fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS
 fi
 
 if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then

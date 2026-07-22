@@ -85,10 +85,22 @@ int main(int argc, char** argv) {
 	SYSCALL_ERR_HANDLE("stat", stat(config.src, &input_stat));
 
 	if ((input_stat.st_size % config.fs_block_size) != 0) {
-		fprintf(stderr, "file size must be divisible by %ld, got %ld\n", config.fs_block_size, input_stat.st_size);
+		fprintf(stderr, "file size must be divisible by block size: %ld, got %ld\n", config.fs_block_size, input_stat.st_size);
 		return FCP_BAD_FILE_SIZE;
 	}
-	
+
+	if (((input_stat.st_size / config.threads) % config.fs_block_size) != 0) {
+		fprintf(stderr, "(file size / threads) must be divisible by block size: %ld, got %ld\n", config.fs_block_size, input_stat.st_size / config.threads);
+		return FCP_BAD_FILE_SIZE;
+	}
+
+	if (config.async && (((input_stat.st_size / (config.queue_depth*config.threads)) % config.queue_depth) != 0)) {
+		fprintf(stderr, "with async (file size / (queue_depth*threads) must be divisible by block size: %ld, got %ld\n",
+			config.fs_block_size,
+			input_stat.st_size / (config.queue_depth*config.threads));
+		return FCP_BAD_FILE_SIZE;
+	}
+
 	if ((config.fs_block_size % sizeof(void*)) != 0) {
 		fprintf(stderr, "fs block size must be divisible by sizeof(void*): %ld, got %ld\n", sizeof(void*), config.fs_block_size);
 		return FCP_BAD_FILE_SIZE;

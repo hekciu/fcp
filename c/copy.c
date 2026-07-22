@@ -16,6 +16,7 @@ typedef struct {
     size_t offset;
     off_t n_bytes;
 	uint32_t queue_depth;
+	size_t fs_block_size;
 } copy_thread_params_t;
 
 typedef struct {
@@ -34,7 +35,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     int src_fd, read_args;
 
     read_args = O_RDONLY;
-    // read_args |= O_DIRECT; // disable kernel caching
 
     SYSCALL_ERR_HANDLE("open (read)", (src_fd = open(config->src, read_args)));
 
@@ -71,6 +71,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         params->offset = offset;
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
+        params->fs_block_size = config->fs_block_size;
 
 		if (config->async) {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
@@ -110,21 +111,19 @@ static io_context_t io_context_write = 0;
 static void* async_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
 
-	/* TODO: memory leak below! */
-	// uint8_t* copy_buffer = malloc(params->n_bytes);
-
 	uint8_t* copy_buffer = NULL;
 
-	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->n_bytes, params->n_bytes));
+	/* TODO: memory leak below! */
+	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
 
     int read_args, write_args;
 
     read_args = O_RDONLY;
-    // read_args |= O_DIRECT; // disable kernel caching
+    //read_args |= O_DIRECT; // disable kernel caching
 
     write_args = O_WRONLY;
     write_args |= O_CREAT;
-    // write_args |= O_DIRECT; // disable kernel caching
+    //write_args |= O_DIRECT; // disable kernel caching
     // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
 
     mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
@@ -205,16 +204,19 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 static void* sync_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
 
+	uint8_t* copy_buffer = NULL;
+
 	/* TODO: memory leak below! */
-	uint8_t* copy_buffer = malloc(params->n_bytes);
+	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
 
     int src_fd, dest_fd, read_args, write_args;
 
     read_args = O_RDONLY;
-    // read_args |= O_DIRECT; // disable kernel caching
+    read_args |= O_DIRECT; // disable kernel caching
 
     write_args = O_WRONLY;
     write_args |= O_CREAT;
+	write_args |= O_DIRECT;
     // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
 
     SYSCALL_ERR_HANDLE_PTHREAD("open (read)", (src_fd = open(params->input, read_args)));
