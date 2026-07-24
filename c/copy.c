@@ -17,6 +17,7 @@ typedef struct {
     off_t n_bytes;
 	uint32_t queue_depth;
 	size_t fs_block_size;
+	int thread_num;
 } copy_thread_params_t;
 
 typedef struct {
@@ -29,6 +30,12 @@ static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
 
 static void* sync_copy_thread_callback(void* copy_thread_params);
 static void* async_copy_thread_callback(void* copy_thread_params);
+
+static struct iocb*** write_configs_ptrs_array = NULL;
+static struct iocb*** read_configs_ptrs_array = NULL;
+
+static io_context_t* io_context_read_array = 0;
+static io_context_t* io_context_write_array = 0;
 
 
 FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
@@ -59,7 +66,15 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     pthread_t* threads = malloc(sizeof(pthread_t) * config->threads);
     copy_thread_params_t* threads_params = malloc(sizeof(copy_thread_params_t) * config->threads);
 
-    size_t bytes_per_section = (src_size / config->threads) + 1;
+	/* We essentially do not care about memory leaks */
+
+	write_configs_ptrs_array = malloc(config->threads * sizeof(struct iocb**));
+	read_configs_ptrs_array = malloc(config->threads * sizeof(struct iocb**));
+
+	io_context_read_array = malloc(config->threads * sizeof(io_context_t*));
+	io_context_write_array = malloc(config->threads * sizeof(io_context_t*));
+
+    size_t bytes_per_section = (src_size / config->threads);
 
     /* timer start */
     fcp_timer_t timer;
@@ -81,6 +96,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
         params->fs_block_size = config->fs_block_size;
+		params->thread_num = t_num;
 
 		if (config->async) {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
@@ -110,13 +126,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 }
 
 
-static struct iocb** write_configs_ptrs = NULL;
-static struct iocb** read_configs_ptrs = NULL;
-
-static io_context_t io_context_read = 0;
-static io_context_t io_context_write = 0;
-
-
 static void* async_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
 
@@ -127,8 +136,8 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 
-	SYSCALL_ERR_HANDLE_PTHREAD("io_setup io_context_read", io_setup(maxevents, &io_context_read));
-	SYSCALL_ERR_HANDLE_PTHREAD("io_setup io_context_write", io_setup(maxevents, &io_context_write));
+	SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO("io_setup (io_context_read)", io_setup(maxevents, (io_context_read_array + params->thread_num)));
+	SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO("io_setup (io_context_write)", io_setup(maxevents, (io_context_write_array + params->thread_num)));
 
 	/* TODO: memory leak below! */
 	struct iocb* read_configs = calloc(maxevents, sizeof(struct iocb));
@@ -146,8 +155,8 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	async_copy_item_t* copy_states = calloc(maxevents, sizeof(async_copy_item_t));
 
 	/* TODO: memory leak below! */
-	write_configs_ptrs = calloc(maxevents, sizeof(struct iocb*));
-	read_configs_ptrs = calloc(maxevents, sizeof(struct iocb*));
+	*(write_configs_ptrs_array + params->thread_num) = calloc(maxevents, sizeof(struct iocb*));
+	*(read_configs_ptrs_array + params->thread_num) = calloc(maxevents, sizeof(struct iocb*));
 
 	for (int n = 0; n < maxevents; n++) {
 		struct iocb* cur_iocb_read = read_configs + n;
@@ -162,11 +171,11 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 		cur_iocb_read->data = (void*)(size_t)n;
 		cur_iocb_write->data = (void*)(size_t)n;
 
-		*(write_configs_ptrs + n) = cur_iocb_write;
-		*(read_configs_ptrs + n) = cur_iocb_read;
+		*(*(write_configs_ptrs_array + params->thread_num) + n) = cur_iocb_write;
+		*(*(read_configs_ptrs_array + params->thread_num) + n) = cur_iocb_read;
 	}
 
-	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(io_context_read, maxevents, read_configs_ptrs));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(*(io_context_read_array + params->thread_num), maxevents, *(read_configs_ptrs_array + params->thread_num)));
 
 	struct timespec timespec_zeros = {
 		.tv_sec = 0,
@@ -177,25 +186,28 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 
 	for(int i = 0; i < maxevents; i++) {
 		struct io_event* ev = malloc(sizeof(struct io_event));
-		SYSCALL_ERR_HANDLE_PTHREAD("io_getevents (read)", io_getevents(io_context_read, 1, 1, ev, 0));
+		SYSCALL_ERR_HANDLE_PTHREAD("io_getevents (read)", io_getevents(*(io_context_read_array + params->thread_num), 1, 1, ev, 0));
 
 		size_t num_conf = (size_t)ev->data;
 
-		struct iocb* iocb_write = *(write_configs_ptrs + num_conf);
+		struct iocb* iocb_write = *(*(write_configs_ptrs_array + params->thread_num) + num_conf);
 
-		SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)", io_submit(io_context_write, 1, (write_configs_ptrs + num_conf)));
+		SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)",
+			io_submit(*(io_context_write_array + params->thread_num), 1, (*(write_configs_ptrs_array + params->thread_num) + num_conf)));
 	}
 
-	io_getevents(io_context_write, maxevents, maxevents, write_events, 0);
+	io_getevents(*(io_context_write_array + params->thread_num), maxevents, maxevents, write_events, 0);
 
-	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(io_context_read));
-	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(io_context_write));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(*(io_context_read_array + params->thread_num)));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(*(io_context_write_array + params->thread_num)));
 }
 
 
 
 static void* sync_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
+
+	printf("thread fs block size: %ld, n_bytes: %ld\n", params->fs_block_size, params->n_bytes);
 
 	uint8_t* copy_buffer = NULL;
 

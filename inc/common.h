@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "error_codes.h"
 
@@ -14,9 +15,11 @@ void fcp_print_help_message();
 void fcp_print_time(uint64_t elapsed_ns);
 FCP_ERROR fcp_parse_ul(const char* input, uint32_t* output);
 
-#define SYSCALL_ERR_HANDLE(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerror(errno));return FCP_SYSCALL_FAILED;} } while(0)
+#define SYSCALL_ERR_HANDLE(name, call) do { int res;if((res = call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerror(errno));return FCP_SYSCALL_FAILED;} } while(0)
 
-#define SYSCALL_ERR_HANDLE_PTHREAD(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerror(errno));return (void*)FCP_SYSCALL_FAILED;} } while(0)
+#define SYSCALL_ERR_HANDLE_PTHREAD(name, call) do { int res;if((res = call) < 0) {fprintf(stderr, "%s failed with code %d, details: \n%s\n", name, res, strerror(abs(errno)));return (void*)FCP_SYSCALL_FAILED;} } while(0)
+
+#define SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO(name, call) do { int res;if((res = call) < 0) {fprintf(stderr, "%s failed with code %d, details: \n%s\n", name, res, strerror(abs(res)));return (void*)FCP_SYSCALL_FAILED;} } while(0)
 
 #define HANDLE_ERROR(call) \
 { \
