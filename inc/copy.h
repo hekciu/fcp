@@ -13,6 +13,7 @@ typedef struct {
     const char* dest;
     bool async;
 	size_t fs_block_size;
+	bool use_legacy_libaio;
 } fcp_copy_config_t;
 
 typedef struct {

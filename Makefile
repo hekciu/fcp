@@ -2,7 +2,7 @@ TEST_DIR = test
 INCLUDE_DIR = inc
 BUILD_DIR = build
 SRC_DIR = c
-CC_FLAGS = -ggdb -I${INCLUDE_DIR} -lpthread -laio
+CC_FLAGS = -ggdb -I${INCLUDE_DIR} -lpthread -laio -luring
 SOURCES = ${BUILD_DIR}/main.o ${BUILD_DIR}/common.o ${BUILD_DIR}/copy.o ${BUILD_DIR}/timer.o
 INCLUDES = ${INCLUDE_DIR}/common.h ${INCLUDE_DIR}/config.h ${INCLUDE_DIR}/error_codes.h ${INCLUDE_DIR}/copy.h ${INCLUDE_DIR}/timer.h
 

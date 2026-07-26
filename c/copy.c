@@ -5,6 +5,8 @@
 
 #include <pthread.h>
 #include <libaio.h>
+#include <liburing/io_uring.h>
+#include <liburing.h>
 
 #include "copy.h"
 #include "common.h"
@@ -29,7 +31,8 @@ static FCP_ERROR assert_file_type(struct stat* sb);
 static FCP_ERROR get_file_size(struct stat* sb, size_t* out);
 
 static void* sync_copy_thread_callback(void* copy_thread_params);
-static void* async_copy_thread_callback(void* copy_thread_params);
+static void* async_libaio_copy_thread_callback(void* copy_thread_params);
+static void* async_liburing_copy_thread_callback(void* copy_thread_params);
 
 static struct iocb*** write_configs_ptrs_array = NULL;
 static struct iocb*** read_configs_ptrs_array = NULL;
@@ -98,10 +101,16 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         params->fs_block_size = config->fs_block_size;
 		params->thread_num = t_num;
 
-		if (config->async) {
+		if (config->async && config->use_legacy_libaio) {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
-						   async_copy_thread_callback,
+						   async_libaio_copy_thread_callback,
+						   (void*)params));
+		}
+		else if (config->async) {
+			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+						   NULL, 
+						   async_liburing_copy_thread_callback,
 						   (void*)params));
 		} else {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
@@ -126,7 +135,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 }
 
 
-static void* async_copy_thread_callback(void* copy_thread_params) {
+static void* async_libaio_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
 
 	uint8_t* copy_buffer = NULL;
@@ -202,6 +211,83 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(*(io_context_write_array + params->thread_num)));
 }
 
+
+static void* async_liburing_copy_thread_callback(void* copy_thread_params) {
+    copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
+
+	uint8_t* copy_buffer = NULL;
+
+	/* TODO: memory leak below! */
+	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
+
+	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
+
+	struct io_uring read_ring = {0};
+	struct io_uring write_ring = {0};
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_queue_init (read)", io_uring_queue_init(params->queue_depth, &read_ring, 0));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_queue_init (write)", io_uring_queue_init(params->queue_depth, &write_ring, 0));
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_register_files (src)", io_uring_register_files(&read_ring, &params->src_fd, 1));
+	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_register_files (dest)", io_uring_register_files(&write_ring, &params->dest_fd, 1));
+
+	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+
+	for (int n = 0; n < maxevents; n++) {
+		struct io_uring_sqe *sqe;
+		size_t relative_offset = n * bytes_per_call;
+		size_t offset = params->offset + relative_offset;
+		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
+
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (read)", (sqe = io_uring_get_sqe(&read_ring)));
+
+		printf("read config %d, copy_bytes: %lu, offset: %lu\n", n, copy_bytes, offset);
+
+		io_uring_prep_read(sqe, params->src_fd, copy_buffer, copy_bytes, offset);
+
+		sqe->user_data = (uint64_t)n;
+
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (read)", io_uring_submit(&read_ring));
+	}
+
+	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
+		struct io_uring_cqe *cqe;
+		struct io_uring_sqe *sqe;
+
+		// use libaio-like error-handling macro (get -ERRNO code from result data)
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (read)", io_uring_wait_cqe(&read_ring, &cqe));
+
+		io_uring_cqe_seen(&read_ring, cqe);
+
+		int n = (int)cqe->user_data;
+
+		size_t relative_offset = n * bytes_per_call;
+		size_t offset = params->offset + relative_offset;
+		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
+
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (write)", (sqe = io_uring_get_sqe(&write_ring)));
+
+		io_uring_prep_write(sqe, params->dest_fd, copy_buffer, copy_bytes, offset);
+
+		sqe->user_data = (uint64_t)n;
+	}
+
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (write)", io_uring_submit(&write_ring));
+
+	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
+		struct io_uring_cqe *cqe;
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (write)", io_uring_wait_cqe(&write_ring, &cqe));
+
+		printf("finished write event with n %d\n", (int)cqe->user_data);
+
+		io_uring_cqe_seen(&write_ring, cqe);
+	}
+
+	io_uring_queue_exit(&read_ring);
+	io_uring_queue_exit(&write_ring);
+
+	(void*)FCP_OK;
+}
 
 
 static void* sync_copy_thread_callback(void* copy_thread_params) {

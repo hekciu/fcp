@@ -23,10 +23,11 @@ static struct option long_opt[] =
   {"raw", no_argument, NULL, 'r'},
   {"threads", required_argument, NULL, 't'},
   {"queue_depth", required_argument, NULL, 'q'},
+  {"legacy", required_argument, NULL, 'l'},
   {NULL, 0, NULL, 0}
 };
 
-static const char*  short_opt = "hiortq";
+static const char*  short_opt = "hiortql";
 
 int main(int argc, char** argv) {
     fcp_copy_config_t config = {0};
@@ -38,6 +39,7 @@ int main(int argc, char** argv) {
     config.queue_depth = 0;
     config.async = false;
 	config.fs_block_size = FS_BLOCK_SIZE;
+	config.use_legacy_libaio = false;
 
     char c;
 
@@ -63,6 +65,10 @@ int main(int argc, char** argv) {
 
             case 'r':
             output_raw = true;
+            break;
+
+            case 'l':
+            config.use_legacy_libaio = true;
             break;
 
             case 'q':
