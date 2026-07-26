@@ -241,9 +241,7 @@ static void* async_liburing_copy_thread_callback(void* copy_thread_params) {
 
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (read)", (sqe = io_uring_get_sqe(&read_ring)));
 
-		printf("read config %d, copy_bytes: %lu, offset: %lu\n", n, copy_bytes, offset);
-
-		io_uring_prep_read(sqe, params->src_fd, copy_buffer, copy_bytes, offset);
+		io_uring_prep_read(sqe, params->src_fd, copy_buffer + relative_offset, copy_bytes, offset);
 
 		sqe->user_data = (uint64_t)n;
 
@@ -267,7 +265,7 @@ static void* async_liburing_copy_thread_callback(void* copy_thread_params) {
 
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (write)", (sqe = io_uring_get_sqe(&write_ring)));
 
-		io_uring_prep_write(sqe, params->dest_fd, copy_buffer, copy_bytes, offset);
+		io_uring_prep_write(sqe, params->dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
 
 		sqe->user_data = (uint64_t)n;
 	}
@@ -277,8 +275,6 @@ static void* async_liburing_copy_thread_callback(void* copy_thread_params) {
 	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
 		struct io_uring_cqe *cqe;
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (write)", io_uring_wait_cqe(&write_ring, &cqe));
-
-		printf("finished write event with n %d\n", (int)cqe->user_data);
 
 		io_uring_cqe_seen(&write_ring, cqe);
 	}
