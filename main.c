@@ -98,11 +98,24 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "with async (file size / (queue_depth*threads) must be divisible by block size: %ld, got %ld\n",
 			config.fs_block_size,
 			input_stat.st_size / (config.queue_depth*config.threads));
+
 		return FCP_BAD_FILE_SIZE;
 	}
 
 	if ((config.fs_block_size % sizeof(void*)) != 0) {
 		fprintf(stderr, "fs block size must be divisible by sizeof(void*): %ld, got %ld\n", sizeof(void*), config.fs_block_size);
+		return FCP_BAD_FILE_SIZE;
+	}
+
+	if (config.async && ((input_stat.st_size / (config.queue_depth*config.threads)) > 2147479552)) {
+		fprintf(stderr, "single write block in linux cannot be bigger than 2147479552\n");
+
+		return FCP_BAD_FILE_SIZE;
+	}
+
+	if ((input_stat.st_size / config.threads) > 2147479552) {
+		fprintf(stderr, "single write block in linux cannot be bigger than 2147479552\n");
+
 		return FCP_BAD_FILE_SIZE;
 	}
 

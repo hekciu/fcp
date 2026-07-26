@@ -14,7 +14,7 @@ typedef struct {
 	int src_fd;
 	int dest_fd;
     size_t offset;
-    off_t n_bytes;
+    size_t n_bytes;
 	uint32_t queue_depth;
 	size_t fs_block_size;
 	int thread_num;
@@ -26,7 +26,7 @@ typedef struct {
 } async_copy_item_t;
 
 static FCP_ERROR assert_file_type(struct stat* sb);
-static FCP_ERROR get_file_size(struct stat* sb, off_t* out);
+static FCP_ERROR get_file_size(struct stat* sb, size_t* out);
 
 static void* sync_copy_thread_callback(void* copy_thread_params);
 static void* async_copy_thread_callback(void* copy_thread_params);
@@ -59,7 +59,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     HANDLE_ERROR(assert_file_type(&src_sb));
 
-    off_t src_size = 0;
+    size_t src_size = 0;
 
     HANDLE_ERROR(get_file_size(&src_sb, &src_size));
 
@@ -207,8 +207,6 @@ static void* async_copy_thread_callback(void* copy_thread_params) {
 static void* sync_copy_thread_callback(void* copy_thread_params) {
     copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
 
-	printf("thread fs block size: %ld, n_bytes: %ld\n", params->fs_block_size, params->n_bytes);
-
 	uint8_t* copy_buffer = NULL;
 
 	/* TODO: memory leak below! */
@@ -229,7 +227,7 @@ static FCP_ERROR assert_file_type(struct stat* sb) {
 }
 
 
-static FCP_ERROR get_file_size(struct stat* sb, off_t* out) {
+static FCP_ERROR get_file_size(struct stat* sb, size_t* out) {
     *out = sb->st_size;
 
     return FCP_OK;

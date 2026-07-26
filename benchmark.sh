@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 FOLDER=$1
 FILE_SIZE=$2
 THREADS=$3
@@ -34,12 +36,14 @@ else
 fi
 
 if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
-  echo "files contents are identical"
 	echo "benchmark finished"
 	exit 0
 else
-  echo "files differ"
 	echo "something went wrong, files are different!"
+	echo "source file size:"
+	wc -c <  $SOURCE_FILE
+	echo "destination file size:"
+	wc -c <  $DESTINATION_FILE
 	exit 1
 fi
 

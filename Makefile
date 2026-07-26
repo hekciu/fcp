@@ -1,4 +1,4 @@
-
+TEST_DIR = test
 INCLUDE_DIR = inc
 BUILD_DIR = build
 SRC_DIR = c
@@ -28,6 +28,7 @@ ${BUILD_DIR}:
 
 clean:
 	rm -rf ${BUILD_DIR}
+	rm -rf ${TEST_DIR}/*
 
 install:
 	cp ./fcp /usr/bin/fcp
