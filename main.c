@@ -138,5 +138,12 @@ int main(int argc, char** argv) {
 
     fcp_print_time(output.elapsed_ns);
 
+    double bytes_per_second =
+        ((double)input_stat.st_size) / (((double)output.elapsed_ns) / 1000000000.0); 
+
+    double megabytes_per_second = bytes_per_second / 1000000.0;
+
+    printf("megabytes per second: %f\n", megabytes_per_second);
+
     return 0;
 }
