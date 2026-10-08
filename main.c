@@ -127,23 +127,34 @@ int main(int argc, char** argv) {
 
     HANDLE_ERROR(fcp_copy(&config, &output));
 
+    /*
     if (output_raw) {
         printf("%lu", output.elapsed_ns);
 
         return 0;
     }
+    */
 
 	printf("input: '%s', output: '%s'\n", config.src, config.dest);
     printf("number of threads: %u, queue depth: %u\n", config.threads, config.queue_depth);
 
-    fcp_print_time(output.elapsed_ns);
+    fcp_print_time(output.read_elapsed_ns);
+    fcp_print_time(output.write_elapsed_ns);
 
-    double bytes_per_second =
-        ((double)input_stat.st_size) / (((double)output.elapsed_ns) / 1000000000.0); 
+    double read_bytes_per_second =
+        ((double)input_stat.st_size) / (((double)output.read_elapsed_ns) / 1000000000.0); 
 
-    double megabytes_per_second = bytes_per_second / 1000000.0;
+    double read_megabytes_per_second = read_bytes_per_second / 1000000.0;
 
-    printf("megabytes per second: %f\n", megabytes_per_second);
+    printf("read megabytes per second: %f\n", read_megabytes_per_second);
+
+
+    double write_bytes_per_second =
+        ((double)input_stat.st_size) / (((double)output.write_elapsed_ns) / 1000000000.0); 
+
+    double write_megabytes_per_second = write_bytes_per_second / 1000000.0;
+
+    printf("write megabytes per second: %f\n", write_megabytes_per_second);
 
     return 0;
 }

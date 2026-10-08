@@ -1,4 +1,3 @@
-
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -15,25 +14,34 @@
 
 typedef struct {
 	int src_fd;
-	int dest_fd;
+    uint8_t* buffer;
     size_t offset;
     size_t n_bytes;
 	uint32_t queue_depth;
 	size_t fs_block_size;
 	int thread_num;
-} copy_thread_params_t;
+} read_thread_params_t;
 
 typedef struct {
-	size_t n_bytes;
-	bool was_read_finished;
-} async_copy_item_t;
+	int dest_fd;
+    uint8_t* buffer;
+    size_t offset;
+    size_t n_bytes;
+	uint32_t queue_depth;
+	size_t fs_block_size;
+	int thread_num;
+} write_thread_params_t;
 
 static FCP_ERROR assert_file_type(struct stat* sb);
 static FCP_ERROR get_file_size(struct stat* sb, size_t* out);
 
-static void* sync_copy_thread_callback(void* copy_thread_params);
-static void* async_libaio_copy_thread_callback(void* copy_thread_params);
-static void* async_liburing_copy_thread_callback(void* copy_thread_params);
+static void* sync_read_thread_callback(void* copy_thread_params);
+static void* async_libaio_read_thread_callback(void* copy_thread_params);
+static void* async_liburing_read_thread_callback(void* copy_thread_params);
+
+static void* sync_write_thread_callback(void* copy_thread_params);
+static void* async_libaio_write_thread_callback(void* copy_thread_params);
+static void* async_liburing_write_thread_callback(void* copy_thread_params);
 
 static struct iocb*** write_configs_ptrs_array = NULL;
 static struct iocb*** read_configs_ptrs_array = NULL;
@@ -67,8 +75,11 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     HANDLE_ERROR(get_file_size(&src_sb, &src_size));
 
-    pthread_t* threads = malloc(sizeof(pthread_t) * config->threads);
-    copy_thread_params_t* threads_params = malloc(sizeof(copy_thread_params_t) * config->threads);
+    pthread_t* read_threads = malloc(sizeof(pthread_t) * config->threads);
+    pthread_t* write_threads = malloc(sizeof(pthread_t) * config->threads);
+
+    read_thread_params_t* read_threads_params = malloc(sizeof(read_thread_params_t) * config->threads);
+    write_thread_params_t* write_threads_params = malloc(sizeof(write_thread_params_t) * config->threads);
 
 	/* We essentially do not care about memory leaks */
 
@@ -80,13 +91,15 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     size_t bytes_per_section = (src_size / config->threads);
 
+    uint8_t* buffer = malloc(src_size);
+
     /* timer start */
-    fcp_timer_t timer;
-    start_timer(&timer);
+    fcp_timer_t read_timer, write_timer;
+    start_timer(&read_timer);
 
     for (size_t t_num = 0; t_num < config->threads; t_num++) {
-        copy_thread_params_t* params = threads_params + t_num;
-        pthread_t* thread = threads + t_num;
+        read_thread_params_t* params = read_threads_params + t_num;
+        pthread_t* thread = read_threads + t_num;
 
         size_t bytes_left = src_size - (t_num * bytes_per_section);
 
@@ -95,7 +108,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         size_t offset = t_num * bytes_per_section;
 
         params->src_fd = src_fd;
-        params->dest_fd = dest_fd;
+        params->buffer = buffer;
         params->offset = offset;
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
@@ -105,132 +118,169 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 		if (config->async && config->use_legacy_libaio) {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
-						   async_libaio_copy_thread_callback,
+						   async_libaio_read_thread_callback,
 						   (void*)params));
 		}
 		else if (config->async) {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
-						   async_liburing_copy_thread_callback,
+						   async_liburing_read_thread_callback,
 						   (void*)params));
 		} else {
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
-						   sync_copy_thread_callback,
+						   sync_read_thread_callback,
 						   (void*)params));
 		}
 
     }
 
-    for (pthread_t* thread = threads; thread < (threads + config->threads); thread++) {
+    for (pthread_t* thread = read_threads; thread < (read_threads + config->threads); thread++) {
         pthread_join(*thread, NULL);
     }
 
-    stop_timer(&timer);
-    output->elapsed_ns = timer.elapsed_ns;
+    stop_timer(&read_timer);
+    output->read_elapsed_ns = read_timer.elapsed_ns;
 
-    free(threads);
-    free(threads_params);
+    start_timer(&write_timer);
+
+    for (size_t t_num = 0; t_num < config->threads; t_num++) {
+        write_thread_params_t* params = write_threads_params + t_num;
+        pthread_t* thread = write_threads + t_num;
+
+        size_t bytes_left = src_size - (t_num * bytes_per_section);
+
+        size_t copy_bytes = bytes_left > bytes_per_section ? bytes_per_section : bytes_left;
+
+        size_t offset = t_num * bytes_per_section;
+
+        params->dest_fd = dest_fd;
+        params->buffer = buffer;
+        params->offset = offset;
+        params->n_bytes = copy_bytes;
+        params->queue_depth = config->queue_depth;
+        params->fs_block_size = config->fs_block_size;
+		params->thread_num = t_num;
+
+		if (config->async && config->use_legacy_libaio) {
+			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+						   NULL, 
+						   async_libaio_write_thread_callback,
+						   (void*)params));
+		}
+		else if (config->async) {
+			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+						   NULL, 
+						   async_liburing_write_thread_callback,
+						   (void*)params));
+		} else {
+			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+						   NULL, 
+						   sync_write_thread_callback,
+						   (void*)params));
+		}
+
+    }
+
+    for (pthread_t* thread = write_threads; thread < (write_threads + config->threads); thread++) {
+        pthread_join(*thread, NULL);
+    }
+
+    stop_timer(&write_timer);
+    output->write_elapsed_ns = write_timer.elapsed_ns;
 
     return FCP_OK;
 }
 
 
-static void* async_libaio_copy_thread_callback(void* copy_thread_params) {
-    copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
+/* ASYNC COPY WITH LIBAIO */
+static void* async_libaio_read_thread_callback(void* read_thread_params) {
+    read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
 
-	uint8_t* copy_buffer = NULL;
-
-	/* TODO: memory leak below! */
-	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
+	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&params->buffer, params->fs_block_size, params->n_bytes));
 
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 
 	SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO("io_setup (io_context_read)", io_setup(maxevents, (io_context_read_array + params->thread_num)));
-	SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO("io_setup (io_context_write)", io_setup(maxevents, (io_context_write_array + params->thread_num)));
 
-	/* TODO: memory leak below! */
 	struct iocb* read_configs = calloc(maxevents, sizeof(struct iocb));
-	/* TODO: memory leak below! */
-	struct iocb* write_configs = calloc(maxevents, sizeof(struct iocb));
 
-	/* TODO: memory leak below! */
 	struct io_event* read_events = calloc(maxevents, sizeof(struct io_event));
-	/* TODO: memory leak below! */
-	struct io_event* write_events = calloc(maxevents, sizeof(struct io_event));
 
 	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
 
-	/* TODO: memory leak below! */
-	async_copy_item_t* copy_states = calloc(maxevents, sizeof(async_copy_item_t));
-
-	/* TODO: memory leak below! */
-	*(write_configs_ptrs_array + params->thread_num) = calloc(maxevents, sizeof(struct iocb*));
 	*(read_configs_ptrs_array + params->thread_num) = calloc(maxevents, sizeof(struct iocb*));
 
 	for (int n = 0; n < maxevents; n++) {
 		struct iocb* cur_iocb_read = read_configs + n;
-		struct iocb* cur_iocb_write = write_configs + n;
 		size_t relative_offset = n * bytes_per_call;
 		size_t offset = params->offset + relative_offset;
 		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
 
-		io_prep_pread(cur_iocb_read, params->src_fd, copy_buffer + relative_offset, copy_bytes, offset);
-		io_prep_pwrite(cur_iocb_write, params->dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
+		io_prep_pread(cur_iocb_read, params->src_fd, params->buffer + relative_offset, copy_bytes, offset);
 
-		cur_iocb_read->data = (void*)(size_t)n;
-		cur_iocb_write->data = (void*)(size_t)n;
-
-		*(*(write_configs_ptrs_array + params->thread_num) + n) = cur_iocb_write;
 		*(*(read_configs_ptrs_array + params->thread_num) + n) = cur_iocb_read;
 	}
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(*(io_context_read_array + params->thread_num), maxevents, *(read_configs_ptrs_array + params->thread_num)));
 
-	struct timespec timespec_zeros = {
-		.tv_sec = 0,
-		.tv_nsec = 0
-	};
-
 	size_t read_events_done = 0;
 
-	for(int i = 0; i < maxevents; i++) {
-		struct io_event* ev = malloc(sizeof(struct io_event));
-		SYSCALL_ERR_HANDLE_PTHREAD("io_getevents (read)", io_getevents(*(io_context_read_array + params->thread_num), 1, 1, ev, 0));
+	io_getevents(*(io_context_read_array + params->thread_num), maxevents, maxevents, read_events, 0);
 
-		size_t num_conf = (size_t)ev->data;
+	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(*(io_context_read_array + params->thread_num)));
+}
 
-		struct iocb* iocb_write = *(*(write_configs_ptrs_array + params->thread_num) + num_conf);
 
-		SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write event)",
-			io_submit(*(io_context_write_array + params->thread_num), 1, (*(write_configs_ptrs_array + params->thread_num) + num_conf)));
+static void* async_libaio_write_thread_callback(void* write_thread_params) {
+    write_thread_params_t* params = (write_thread_params_t*) write_thread_params;
+
+	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
+
+	SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO("io_setup (io_context_write)", io_setup(maxevents, (io_context_write_array + params->thread_num)));
+
+	struct iocb* write_configs = calloc(maxevents, sizeof(struct iocb));
+
+	struct io_event* write_events = calloc(maxevents, sizeof(struct io_event));
+
+	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+
+	*(write_configs_ptrs_array + params->thread_num) = calloc(maxevents, sizeof(struct iocb*));
+
+	for (int n = 0; n < maxevents; n++) {
+		struct iocb* cur_iocb_write = write_configs + n;
+		size_t relative_offset = n * bytes_per_call;
+		size_t offset = params->offset + relative_offset;
+		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
+
+		io_prep_pwrite(cur_iocb_write, params->dest_fd, params->buffer + relative_offset, copy_bytes, offset);
+
+		*(*(write_configs_ptrs_array + params->thread_num) + n) = cur_iocb_write;
 	}
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write events)", io_submit(*(io_context_write_array + params->thread_num), maxevents, *(write_configs_ptrs_array + params->thread_num)));
+
+	size_t write_events_done = 0;
 
 	io_getevents(*(io_context_write_array + params->thread_num), maxevents, maxevents, write_events, 0);
 
-	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(*(io_context_read_array + params->thread_num)));
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(*(io_context_write_array + params->thread_num)));
 }
 
 
-static void* async_liburing_copy_thread_callback(void* copy_thread_params) {
-    copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
+/* ASYNC COPY WITH LIBURING */
+static void* async_liburing_read_thread_callback(void* read_thread_params) {
+    read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
 
-	uint8_t* copy_buffer = NULL;
-
-	/* TODO: memory leak below! */
-	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
+	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&params->buffer, params->fs_block_size, params->n_bytes));
 
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 
 	struct io_uring read_ring = {0};
-	struct io_uring write_ring = {0};
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_queue_init (read)", io_uring_queue_init(params->queue_depth, &read_ring, 0));
-	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_queue_init (write)", io_uring_queue_init(params->queue_depth, &write_ring, 0));
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_register_files (src)", io_uring_register_files(&read_ring, &params->src_fd, 1));
-	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_register_files (dest)", io_uring_register_files(&write_ring, &params->dest_fd, 1));
 
 	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
 
@@ -242,36 +292,55 @@ static void* async_liburing_copy_thread_callback(void* copy_thread_params) {
 
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (read)", (sqe = io_uring_get_sqe(&read_ring)));
 
-		io_uring_prep_read(sqe, params->src_fd, copy_buffer + relative_offset, copy_bytes, offset);
+		io_uring_prep_read(sqe, params->src_fd, params->buffer + relative_offset, copy_bytes, offset);
 
 		sqe->user_data = (uint64_t)n;
 
-		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (read)", io_uring_submit(&read_ring));
 	}
+
+    SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (read)", io_uring_submit(&read_ring));
 
 	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
 		struct io_uring_cqe *cqe;
-		struct io_uring_sqe *sqe;
-
-		// use libaio-like error-handling macro (get -ERRNO code from result data)
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (read)", io_uring_wait_cqe(&read_ring, &cqe));
 
 		io_uring_cqe_seen(&read_ring, cqe);
+	}
 
-		int n = (int)cqe->user_data;
+	io_uring_queue_exit(&read_ring);
 
+	(void*)FCP_OK;
+}
+
+
+static void* async_liburing_write_thread_callback(void* write_thread_params) {
+    write_thread_params_t* params = (write_thread_params_t*) write_thread_params;
+
+	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
+
+	struct io_uring write_ring = {0};
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_queue_init (write)", io_uring_queue_init(params->queue_depth, &write_ring, 0));
+
+	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_register_files (dest)", io_uring_register_files(&write_ring, &params->dest_fd, 1));
+
+	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+
+	for (int n = 0; n < maxevents; n++) {
+		struct io_uring_sqe *sqe;
 		size_t relative_offset = n * bytes_per_call;
 		size_t offset = params->offset + relative_offset;
 		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
 
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (write)", (sqe = io_uring_get_sqe(&write_ring)));
 
-		io_uring_prep_write(sqe, params->dest_fd, copy_buffer + relative_offset, copy_bytes, offset);
+		io_uring_prep_write(sqe, params->dest_fd, params->buffer + relative_offset, copy_bytes, offset);
 
 		sqe->user_data = (uint64_t)n;
+
 	}
 
-		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (write)", io_uring_submit(&write_ring));
+    SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (write)", io_uring_submit(&write_ring));
 
 	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
 		struct io_uring_cqe *cqe;
@@ -280,24 +349,28 @@ static void* async_liburing_copy_thread_callback(void* copy_thread_params) {
 		io_uring_cqe_seen(&write_ring, cqe);
 	}
 
-	io_uring_queue_exit(&read_ring);
 	io_uring_queue_exit(&write_ring);
 
 	(void*)FCP_OK;
 }
 
 
-static void* sync_copy_thread_callback(void* copy_thread_params) {
-    copy_thread_params_t* params = (copy_thread_params_t*) copy_thread_params;
+/* SYNC COPY */
+static void* sync_read_thread_callback(void* read_thread_params) {
+    read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
 
-	uint8_t* copy_buffer = NULL;
+	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&params->buffer, params->fs_block_size, params->n_bytes));
 
-	/* TODO: memory leak below! */
-	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&copy_buffer, params->fs_block_size, params->n_bytes));
+	SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(params->src_fd, params->buffer, params->n_bytes, params->offset));
 
-	SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(params->src_fd, copy_buffer, params->n_bytes, params->offset));
+    return (void*)FCP_OK;
+}
 
-	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(params->dest_fd, copy_buffer, params->n_bytes, params->offset));
+
+static void* sync_write_thread_callback(void* write_thread_params) {
+    write_thread_params_t* params = (write_thread_params_t*) write_thread_params;
+
+	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(params->dest_fd, params->buffer, params->n_bytes, params->offset));
 
     return (void*)FCP_OK;
 }

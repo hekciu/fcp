@@ -17,7 +17,8 @@ typedef struct {
 } fcp_copy_config_t;
 
 typedef struct {
-    uint64_t elapsed_ns;
+    uint64_t read_elapsed_ns;
+    uint64_t write_elapsed_ns;
 } fcp_copy_output_t;
 
 FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output);
