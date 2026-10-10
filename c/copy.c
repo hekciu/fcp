@@ -93,6 +93,8 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     uint8_t* buffer = malloc(src_size);
 
+	SYSCALL_ERR_HANDLE("posix_memalign", posix_memalign((void**)&buffer, config->fs_block_size, src_size));
+
     /* timer start */
     fcp_timer_t read_timer, write_timer;
     start_timer(&read_timer);
@@ -108,7 +110,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         size_t offset = t_num * bytes_per_section;
 
         params->src_fd = src_fd;
-        params->buffer = buffer;
+        params->buffer = buffer + offset;
         params->offset = offset;
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
@@ -155,7 +157,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
         size_t offset = t_num * bytes_per_section;
 
         params->dest_fd = dest_fd;
-        params->buffer = buffer;
+        params->buffer = buffer + offset;
         params->offset = offset;
         params->n_bytes = copy_bytes;
         params->queue_depth = config->queue_depth;
@@ -196,8 +198,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 /* ASYNC COPY WITH LIBAIO */
 static void* async_libaio_read_thread_callback(void* read_thread_params) {
     read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
-
-	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&params->buffer, params->fs_block_size, params->n_bytes));
 
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 
@@ -271,8 +271,6 @@ static void* async_libaio_write_thread_callback(void* write_thread_params) {
 /* ASYNC COPY WITH LIBURING */
 static void* async_liburing_read_thread_callback(void* read_thread_params) {
     read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
-
-	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&params->buffer, params->fs_block_size, params->n_bytes));
 
 	int maxevents = (int)params->queue_depth; // TODO: Casting from uint32_t to int, change queue_depth param to be int from the beginning
 
@@ -358,8 +356,6 @@ static void* async_liburing_write_thread_callback(void* write_thread_params) {
 /* SYNC COPY */
 static void* sync_read_thread_callback(void* read_thread_params) {
     read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
-
-	SYSCALL_ERR_HANDLE_PTHREAD("posix_memalign", posix_memalign((void**)&params->buffer, params->fs_block_size, params->n_bytes));
 
 	SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(params->src_fd, params->buffer, params->n_bytes, params->offset));
 

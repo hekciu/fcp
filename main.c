@@ -138,7 +138,9 @@ int main(int argc, char** argv) {
 	printf("input: '%s', output: '%s'\n", config.src, config.dest);
     printf("number of threads: %u, queue depth: %u\n", config.threads, config.queue_depth);
 
+    printf("read: ");
     fcp_print_time(output.read_elapsed_ns);
+    printf("write: ");
     fcp_print_time(output.write_elapsed_ns);
 
     double read_bytes_per_second =
