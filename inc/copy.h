@@ -14,6 +14,7 @@ typedef struct {
     bool async;
 	size_t fs_block_size;
 	bool use_legacy_libaio;
+	bool use_direct;
 } fcp_copy_config_t;
 
 typedef struct {

@@ -54,12 +54,20 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     int src_fd, dest_fd, read_args, write_args;
 
     read_args = O_RDONLY;
-    read_args |= O_DIRECT; // disable kernel caching
+    if (config->use_direct)
+    {
+        //read_args |= O_DIRECT; // disable kernel caching
+        read_args |= O_DIRECT | O_SYNC; // disable kernel caching
+    }
 
     write_args = O_WRONLY;
     write_args |= O_CREAT;
-	write_args |= O_DIRECT;
-    // write_args |= O_DIRECT | O_SYNC; // disable kernel caching
+
+    if (config->use_direct)
+    {
+        //write_args |= O_DIRECT; // disable kernel caching
+        write_args |= O_DIRECT | O_SYNC; // disable kernel caching
+    }
 
     SYSCALL_ERR_HANDLE("open (read)", (src_fd = open(config->src, read_args)));
     mode_t write_mode = S_IRWXU | S_IRWXG | S_IRWXO;
@@ -95,7 +103,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
 	SYSCALL_ERR_HANDLE("posix_memalign", posix_memalign((void**)&buffer, config->fs_block_size, src_size));
 
-    /* timer start */
     fcp_timer_t read_timer, write_timer;
     start_timer(&read_timer);
 
@@ -134,7 +141,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 						   sync_read_thread_callback,
 						   (void*)params));
 		}
-
     }
 
     for (pthread_t* thread = read_threads; thread < (read_threads + config->threads); thread++) {
@@ -142,6 +148,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     }
 
     stop_timer(&read_timer);
+
     output->read_elapsed_ns = read_timer.elapsed_ns;
 
     start_timer(&write_timer);
@@ -165,13 +172,13 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 		params->thread_num = t_num;
 
 		if (config->async && config->use_legacy_libaio) {
-			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+			SYSCALL_ERR_HANDLE("pthread_create (async libaio)", pthread_create(thread,
 						   NULL, 
 						   async_libaio_write_thread_callback,
 						   (void*)params));
 		}
 		else if (config->async) {
-			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
+			SYSCALL_ERR_HANDLE("pthread_create (async uring)", pthread_create(thread,
 						   NULL, 
 						   async_liburing_write_thread_callback,
 						   (void*)params));
@@ -181,7 +188,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 						   sync_write_thread_callback,
 						   (void*)params));
 		}
-
     }
 
     for (pthread_t* thread = write_threads; thread < (write_threads + config->threads); thread++) {
@@ -189,7 +195,11 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     }
 
     stop_timer(&write_timer);
+
     output->write_elapsed_ns = write_timer.elapsed_ns;
+
+    /* work-around disc internal cache */
+    sleep(1);
 
     return FCP_OK;
 }

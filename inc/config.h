@@ -8,6 +8,8 @@
     "    @param -r --raw -> output raw copy time nanoseconds\n" \
     "    @param -q --queue_depth -> use async I/O, specify queue depth\n" \
     "    @param -t --threads -> number of threads\n" \
+    "    @param -l --legacy -> use libaio instead of liburing for async\n" \
+    "    @param -d --direct -> use direct I/O\n" \
     "   "
 
 #define CFG_TIMER_CLOCK CLOCK_PROCESS_CPUTIME_ID

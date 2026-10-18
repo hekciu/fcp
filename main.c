@@ -23,7 +23,8 @@ static struct option long_opt[] =
   {"raw", no_argument, NULL, 'r'},
   {"threads", required_argument, NULL, 't'},
   {"queue_depth", required_argument, NULL, 'q'},
-  {"legacy", required_argument, NULL, 'l'},
+  {"legacy", no_argument, NULL, 'l'},
+  {"direct", no_argument, NULL, 'd'},
   {NULL, 0, NULL, 0}
 };
 
@@ -40,6 +41,7 @@ int main(int argc, char** argv) {
     config.async = false;
 	config.fs_block_size = FS_BLOCK_SIZE;
 	config.use_legacy_libaio = false;
+	config.use_direct = false;
 
     char c;
 
@@ -69,6 +71,10 @@ int main(int argc, char** argv) {
 
             case 'l':
             config.use_legacy_libaio = true;
+            break;
+
+            case 'd':
+            config.use_direct = true;
             break;
 
             case 'q':

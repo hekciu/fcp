@@ -6,6 +6,8 @@ FOLDER=$1
 FILE_SIZE=$2
 THREADS=$3
 QUEUE_DEPTH=$4
+ADDITIONAL_ARG_1=$5
+ADDITIONAL_ARG_2=$6
 
 ASYNCHRONOUS="1"
 
@@ -30,9 +32,9 @@ head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
 echo "copying file to $DESTINATION_FILE"
 
 if [ "$ASYNCHRONOUS" = "1" ]; then
-	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
 else
-	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
 fi
 
 if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
