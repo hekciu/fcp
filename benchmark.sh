@@ -26,10 +26,16 @@ echo "creating source file in location $SOURCE_FILE"
 BS=512
 COUNT=$(expr $FILE_SIZE / $BS)
 
-head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+# head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+dd if=/dev/urandom bs=$BS count=$FILE_SIZE 2>/dev/null > $SOURCE_FILE
 # dd if=<(base64 < /dev/urandom) of=$SOURCE_FILE bs=$BS count=$FILE_SIZE
 
 echo "copying file to $DESTINATION_FILE"
+
+# sudo sync
+# sudo sysctl vm.drop_caches=1
+# sudo sysctl vm.drop_caches=2
+# sudo sysctl vm.drop_caches=3
 
 if [ "$ASYNCHRONOUS" = "1" ]; then
 	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2

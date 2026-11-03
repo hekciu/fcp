@@ -15,6 +15,12 @@ void fcp_print_help_message();
 void fcp_print_time(uint64_t elapsed_ns);
 FCP_ERROR fcp_parse_ul(const char* input, uint32_t* output);
 
+void fcp_shell_sync();
+void fcp_shell_drop_caches();
+void fcp_shell_blockdev();
+void fcp_shell_hdparm();
+
+
 #define SYSCALL_ERR_HANDLE(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerror(errno));return FCP_SYSCALL_FAILED;} } while(0)
 
 #define SYSCALL_ERR_HANDLE_PTHREAD(name, call) do { if((call) < 0) {fprintf(stderr, "%s failed, details: \n%s\n", name, strerror(abs(errno)));return (void*)FCP_SYSCALL_FAILED;} } while(0)

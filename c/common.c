@@ -5,6 +5,9 @@
 #include "config.h"
 
 
+static void run_command_or_panic(const char* command);
+
+
 void fcp_exit(FCP_ERROR err) {
     fputs("Something went wrong try, 'fcp --help'\n", stderr);
 
@@ -48,6 +51,7 @@ void fcp_print_time(uint64_t elapsed_ns) {
     }
 }
 
+
 FCP_ERROR fcp_parse_ul(const char* input, uint32_t* output) {
     errno = 0;
 
@@ -56,4 +60,54 @@ FCP_ERROR fcp_parse_ul(const char* input, uint32_t* output) {
     if (errno != 0) return FCP_UINT32_PARSE_FAILED;
 
     return FCP_OK;
+}
+
+
+void fcp_shell_sync()
+{
+    //system("sync 2>/dev/null 1>/dev/null");
+    run_command_or_panic("sudo sync");
+}
+
+
+void fcp_shell_drop_caches()
+{
+    run_command_or_panic("sudo echo 3 > /proc/sys/vm/drop_caches");
+}
+
+
+void fcp_shell_blockdev()
+{
+    const char* command = "sudo blockdev --flushbufs "CFG_DISK;
+
+    run_command_or_panic(command);
+}
+
+
+void fcp_shell_hdparm()
+{
+    const char* command = "sudo hdparm -F "CFG_DISK;
+
+    run_command_or_panic(command);
+}
+
+
+
+static void run_command_or_panic(const char* command)
+{
+    if (command == NULL)
+    {
+        fprintf(stderr, "command is NULL!\n");
+
+        exit(1);
+    }
+
+    int status = WEXITSTATUS(system(command));
+
+    if(0 != status)
+    {
+        fprintf(stderr, "command: \"%s\" failed to execute...", command);
+
+        exit(1);
+    }
 }

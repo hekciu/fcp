@@ -14,5 +14,7 @@
 
 #define CFG_TIMER_CLOCK CLOCK_PROCESS_CPUTIME_ID
 
+#define CFG_DISK "/dev/nvme0n1p1"
+
 #endif
 

@@ -103,6 +103,12 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
 	SYSCALL_ERR_HANDLE("posix_memalign", posix_memalign((void**)&buffer, config->fs_block_size, src_size));
 
+    // clear all caches
+    fcp_shell_sync();
+    fcp_shell_drop_caches();
+    fcp_shell_blockdev();
+    fcp_shell_hdparm();
+
     fcp_timer_t read_timer, write_timer;
     start_timer(&read_timer);
 
@@ -151,6 +157,12 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     output->read_elapsed_ns = read_timer.elapsed_ns;
 
+    // clear all caches
+    fcp_shell_sync();
+    fcp_shell_drop_caches();
+    fcp_shell_blockdev();
+    fcp_shell_hdparm();
+
     start_timer(&write_timer);
 
     for (size_t t_num = 0; t_num < config->threads; t_num++) {
@@ -198,11 +210,10 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     output->write_elapsed_ns = write_timer.elapsed_ns;
 
-    /* work-around disc internal cache */
-    sleep(1);
-
     return FCP_OK;
 }
+
+
 
 
 /* ASYNC COPY WITH LIBAIO */
@@ -234,11 +245,11 @@ static void* async_libaio_read_thread_callback(void* read_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(*(io_context_read_array + params->thread_num), maxevents, *(read_configs_ptrs_array + params->thread_num)));
 
-	size_t read_events_done = 0;
-
 	io_getevents(*(io_context_read_array + params->thread_num), maxevents, maxevents, read_events, 0);
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(*(io_context_read_array + params->thread_num)));
+
+    return (void*)FCP_OK;
 }
 
 
@@ -270,12 +281,15 @@ static void* async_libaio_write_thread_callback(void* write_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write events)", io_submit(*(io_context_write_array + params->thread_num), maxevents, *(write_configs_ptrs_array + params->thread_num)));
 
-	size_t write_events_done = 0;
-
 	io_getevents(*(io_context_write_array + params->thread_num), maxevents, maxevents, write_events, 0);
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(*(io_context_write_array + params->thread_num)));
+
+	return (void*)FCP_OK;
 }
+
+
+
 
 
 /* ASYNC COPY WITH LIBURING */
@@ -317,7 +331,7 @@ static void* async_liburing_read_thread_callback(void* read_thread_params) {
 
 	io_uring_queue_exit(&read_ring);
 
-	(void*)FCP_OK;
+	return (void*)FCP_OK;
 }
 
 
@@ -359,7 +373,7 @@ static void* async_liburing_write_thread_callback(void* write_thread_params) {
 
 	io_uring_queue_exit(&write_ring);
 
-	(void*)FCP_OK;
+	return (void*)FCP_OK;
 }
 
 
@@ -367,7 +381,9 @@ static void* async_liburing_write_thread_callback(void* write_thread_params) {
 static void* sync_read_thread_callback(void* read_thread_params) {
     read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
 
-	SYSCALL_ERR_HANDLE_PTHREAD("pread", pread(params->src_fd, params->buffer, params->n_bytes, params->offset));
+    ssize_t bytes_read = pread(params->src_fd, params->buffer, params->n_bytes, params->offset);
+
+	SYSCALL_ERR_HANDLE_PTHREAD("pread", (bytes_read == params->n_bytes ? 0 : -1));
 
     return (void*)FCP_OK;
 }
@@ -376,7 +392,9 @@ static void* sync_read_thread_callback(void* read_thread_params) {
 static void* sync_write_thread_callback(void* write_thread_params) {
     write_thread_params_t* params = (write_thread_params_t*) write_thread_params;
 
-	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", pwrite(params->dest_fd, params->buffer, params->n_bytes, params->offset));
+    ssize_t bytes_written = pwrite(params->dest_fd, params->buffer, params->n_bytes, params->offset);
+
+	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", (bytes_written == params->n_bytes ? 0 : -1));
 
     return (void*)FCP_OK;
 }
