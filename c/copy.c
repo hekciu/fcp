@@ -57,8 +57,8 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     read_args |= O_NONBLOCK;
     if (config->use_direct)
     {
-        //read_args |= O_DIRECT; // disable kernel caching
-        read_args |= O_DIRECT | O_SYNC; // disable kernel caching
+        read_args |= O_DIRECT; // disable kernel caching
+        //read_args |= O_DIRECT | O_SYNC; // disable kernel caching
     }
 
     write_args = O_WRONLY;
@@ -67,8 +67,8 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     if (config->use_direct)
     {
-        //write_args |= O_DIRECT; // disable kernel caching
-        write_args |= O_DIRECT | O_SYNC; // disable kernel caching
+        write_args |= O_DIRECT; // disable kernel caching
+        //write_args |= O_DIRECT | O_SYNC; // disable kernel caching
     }
 
     SYSCALL_ERR_HANDLE("open (read)", (src_fd = open(config->src, read_args)));
