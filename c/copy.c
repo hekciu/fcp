@@ -298,7 +298,6 @@ static void* async_libaio_write_thread_callback(void* write_thread_params) {
 
 
 
-
 /* ASYNC COPY WITH LIBURING */
 static void* async_liburing_read_thread_callback(void* read_thread_params) {
     read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
@@ -311,30 +310,69 @@ static void* async_liburing_read_thread_callback(void* read_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_register_files (src)", io_uring_register_files(&read_ring, &params->src_fd, 1));
 
-	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+    size_t num_chunks = params->n_bytes / params->fs_block_size;
+    if ((params->n_bytes % params->fs_block_size) != 0) num_chunks++;
 
-	for (int n = 0; n < maxevents; n++) {
-		struct io_uring_sqe *sqe;
-		size_t relative_offset = n * bytes_per_call;
-		size_t offset = params->offset + relative_offset;
-		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
+    size_t chunks_issued_write = 0;
+    size_t chunks_ended_write = 0;
 
-		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (read)", (sqe = io_uring_get_sqe(&read_ring)));
+    for (int i = 0; i < maxevents; i++)
+    {
+        if (chunks_issued_write == num_chunks) break;        
 
-		io_uring_prep_read(sqe, params->src_fd, params->buffer + relative_offset, copy_bytes, offset);
+    	struct io_uring_sqe *sqe;
+     	size_t relative_offset = (chunks_issued_write) * params->fs_block_size;
 
-		sqe->user_data = (uint64_t)n;
+        size_t bytes_left = params->n_bytes - relative_offset;
 
-	}
+     	size_t copy_bytes = (bytes_left < params->fs_block_size) ? bytes_left : params->fs_block_size;
+     
+     	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (read)", (sqe = io_uring_get_sqe(&read_ring)));
+     
+     	io_uring_prep_read(sqe, params->src_fd, params->buffer + relative_offset, copy_bytes, params->offset + relative_offset);
+
+        chunks_issued_write++;
+    }
+
 
     SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (read)", io_uring_submit(&read_ring));
 
-	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
+
+    while (chunks_issued_write != num_chunks)
+    {
 		struct io_uring_cqe *cqe;
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (read)", io_uring_wait_cqe(&read_ring, &cqe));
 
 		io_uring_cqe_seen(&read_ring, cqe);
-	}
+
+        chunks_ended_write++;
+
+    	struct io_uring_sqe *sqe;
+     	size_t relative_offset = (chunks_issued_write) * params->fs_block_size;
+
+        size_t bytes_left = params->n_bytes - relative_offset;
+
+     	size_t copy_bytes = (bytes_left < params->fs_block_size) ? bytes_left : params->fs_block_size;
+     
+     	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (read)", (sqe = io_uring_get_sqe(&read_ring)));
+
+     	io_uring_prep_read(sqe, params->src_fd, params->buffer + relative_offset, copy_bytes, params->offset + relative_offset);
+
+        SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (read)", io_uring_submit(&read_ring));
+
+        chunks_issued_write++;
+    }
+
+    while (chunks_ended_write != num_chunks)
+    {
+		struct io_uring_cqe *cqe;
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (read)", io_uring_wait_cqe(&read_ring, &cqe));
+
+		io_uring_cqe_seen(&read_ring, cqe);
+
+        chunks_ended_write++;
+    }
+
 
 	io_uring_queue_exit(&read_ring);
 
@@ -353,30 +391,69 @@ static void* async_liburing_write_thread_callback(void* write_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_register_files (dest)", io_uring_register_files(&write_ring, &params->dest_fd, 1));
 
-	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+    size_t num_chunks = params->n_bytes / params->fs_block_size;
+    if ((params->n_bytes % params->fs_block_size) != 0) num_chunks++;
 
-	for (int n = 0; n < maxevents; n++) {
-		struct io_uring_sqe *sqe;
-		size_t relative_offset = n * bytes_per_call;
-		size_t offset = params->offset + relative_offset;
-		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
+    size_t chunks_issued_write = 0;
+    size_t chunks_ended_write = 0;
 
-		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (write)", (sqe = io_uring_get_sqe(&write_ring)));
+    for (int i = 0; i < maxevents; i++)
+    {
+        if (chunks_issued_write == num_chunks) break;        
 
-		io_uring_prep_write(sqe, params->dest_fd, params->buffer + relative_offset, copy_bytes, offset);
+    	struct io_uring_sqe *sqe;
+     	size_t relative_offset = (chunks_issued_write) * params->fs_block_size;
 
-		sqe->user_data = (uint64_t)n;
+        size_t bytes_left = params->n_bytes - relative_offset;
 
-	}
+     	size_t copy_bytes = (bytes_left < params->fs_block_size) ? bytes_left : params->fs_block_size;
+     
+     	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (write)", (sqe = io_uring_get_sqe(&write_ring)));
+     
+     	io_uring_prep_write(sqe, params->dest_fd, params->buffer + relative_offset, copy_bytes, params->offset + relative_offset);
+
+        chunks_issued_write++;
+    }
+
 
     SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (write)", io_uring_submit(&write_ring));
 
-	for (int ev_num = 0; ev_num < maxevents; ev_num++) {
+
+    while (chunks_issued_write != num_chunks)
+    {
 		struct io_uring_cqe *cqe;
 		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (write)", io_uring_wait_cqe(&write_ring, &cqe));
 
 		io_uring_cqe_seen(&write_ring, cqe);
-	}
+
+        chunks_ended_write++;
+
+    	struct io_uring_sqe *sqe;
+     	size_t relative_offset = (chunks_issued_write) * params->fs_block_size;
+
+        size_t bytes_left = params->n_bytes - relative_offset;
+
+     	size_t copy_bytes = (bytes_left < params->fs_block_size) ? bytes_left : params->fs_block_size;
+     
+     	SYSCALL_ERR_HANDLE_PTHREAD("io_uring_get_sqe (write)", (sqe = io_uring_get_sqe(&write_ring)));
+
+     	io_uring_prep_write(sqe, params->dest_fd, params->buffer + relative_offset, copy_bytes, params->offset + relative_offset);
+
+        SYSCALL_ERR_HANDLE_PTHREAD("io_uring_submit (write)", io_uring_submit(&write_ring));
+
+        chunks_issued_write++;
+    }
+
+    while (chunks_ended_write != num_chunks)
+    {
+		struct io_uring_cqe *cqe;
+		SYSCALL_ERR_HANDLE_PTHREAD("io_uring_wait_cqe (write)", io_uring_wait_cqe(&write_ring, &cqe));
+
+		io_uring_cqe_seen(&write_ring, cqe);
+
+        chunks_ended_write++;
+    }
+
 
 	io_uring_queue_exit(&write_ring);
 
