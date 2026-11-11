@@ -88,7 +88,7 @@ void fcp_shell_hdparm()
 {
     const char* command = "sudo hdparm -F "CFG_DISK;
 
-    run_command_or_panic(command);
+    // run_command_or_panic(command);
 }
 
 

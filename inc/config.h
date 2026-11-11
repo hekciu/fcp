@@ -12,7 +12,7 @@
     "    @param -d --direct -> use direct I/O\n" \
     "   "
 
-#define CFG_TIMER_CLOCK CLOCK_PROCESS_CPUTIME_ID
+#define CFG_TIMER_CLOCK CLOCK_MONOTONIC_RAW
 
 #define CFG_DISK "/dev/nvme0n1p1"
 

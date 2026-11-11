@@ -12,7 +12,7 @@ typedef struct {
     const char* src;
     const char* dest;
     bool async;
-	size_t fs_block_size;
+	uint32_t fs_block_size;
 	bool use_legacy_libaio;
 	bool use_direct;
 } fcp_copy_config_t;

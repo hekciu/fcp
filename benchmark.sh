@@ -6,8 +6,9 @@ FOLDER=$1
 FILE_SIZE=$2
 THREADS=$3
 QUEUE_DEPTH=$4
-ADDITIONAL_ARG_1=$5
-ADDITIONAL_ARG_2=$6
+BLOCK_SIZE=$5
+ADDITIONAL_ARG_1=$6
+ADDITIONAL_ARG_2=$7
 
 ASYNCHRONOUS="1"
 
@@ -26,8 +27,8 @@ echo "creating source file in location $SOURCE_FILE"
 BS=512
 COUNT=$(expr $FILE_SIZE / $BS)
 
-# head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
-dd if=/dev/urandom bs=$BS count=$FILE_SIZE 2>/dev/null > $SOURCE_FILE
+head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+# dd if=/dev/urandom bs=$BS count=$FILE_SIZE 2>/dev/null > $SOURCE_FILE
 # dd if=<(base64 < /dev/urandom) of=$SOURCE_FILE bs=$BS count=$FILE_SIZE
 
 echo "copying file to $DESTINATION_FILE"
@@ -38,9 +39,9 @@ echo "copying file to $DESTINATION_FILE"
 # sudo sysctl vm.drop_caches=3
 
 if [ "$ASYNCHRONOUS" = "1" ]; then
-	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH --fs_block_size $BLOCK_SIZE $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
 else
-	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --fs_block_size $BLOCK_SIZE $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
 fi
 
 if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then

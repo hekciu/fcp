@@ -54,6 +54,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     int src_fd, dest_fd, read_args, write_args;
 
     read_args = O_RDONLY;
+    read_args |= O_NONBLOCK;
     if (config->use_direct)
     {
         //read_args |= O_DIRECT; // disable kernel caching
@@ -62,6 +63,7 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
     write_args = O_WRONLY;
     write_args |= O_CREAT;
+    write_args |= O_NONBLOCK;
 
     if (config->use_direct)
     {
@@ -205,6 +207,11 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
     for (pthread_t* thread = write_threads; thread < (write_threads + config->threads); thread++) {
         pthread_join(*thread, NULL);
     }
+
+
+    SYSCALL_ERR_HANDLE("syncfs()", syncfs(dest_fd));
+    SYSCALL_ERR_HANDLE("fsync()", fsync(dest_fd));
+    //syncfs()
 
     stop_timer(&write_timer);
 
@@ -381,9 +388,21 @@ static void* async_liburing_write_thread_callback(void* write_thread_params) {
 static void* sync_read_thread_callback(void* read_thread_params) {
     read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
 
-    ssize_t bytes_read = pread(params->src_fd, params->buffer, params->n_bytes, params->offset);
+    size_t loop_count = (params->n_bytes / params->fs_block_size);
 
-	SYSCALL_ERR_HANDLE_PTHREAD("pread", (bytes_read == params->n_bytes ? 0 : -1));
+    if ((params->n_bytes % params->fs_block_size) != 0) loop_count++;
+
+    for (size_t i = 0; i < loop_count; i++)
+    {
+        size_t local_offset = params->fs_block_size * i;
+        size_t bytes_left = params->n_bytes - local_offset;
+        size_t read_bytes = (params->fs_block_size > bytes_left) ? bytes_left : params->fs_block_size;
+
+        ssize_t bytes_read = pread(params->src_fd, params->buffer + local_offset, read_bytes, params->offset + local_offset);
+
+        SYSCALL_ERR_HANDLE_PTHREAD("pread", (bytes_read == read_bytes ? 0 : -1));
+    }
+
 
     return (void*)FCP_OK;
 }
@@ -392,9 +411,21 @@ static void* sync_read_thread_callback(void* read_thread_params) {
 static void* sync_write_thread_callback(void* write_thread_params) {
     write_thread_params_t* params = (write_thread_params_t*) write_thread_params;
 
-    ssize_t bytes_written = pwrite(params->dest_fd, params->buffer, params->n_bytes, params->offset);
+    size_t loop_count = (params->n_bytes / params->fs_block_size);
 
-	SYSCALL_ERR_HANDLE_PTHREAD("pwrite", (bytes_written == params->n_bytes ? 0 : -1));
+    if ((params->n_bytes % params->fs_block_size) != 0) loop_count++;
+
+    for (size_t i = 0; i < loop_count; i++)
+    {
+        size_t local_offset = params->fs_block_size * i;
+        size_t bytes_left = params->n_bytes - local_offset;
+        size_t write_bytes = (params->fs_block_size > bytes_left) ? bytes_left : params->fs_block_size;
+
+        ssize_t bytes_written = pwrite(params->dest_fd, params->buffer + local_offset, write_bytes, params->offset + local_offset);
+
+	    SYSCALL_ERR_HANDLE_PTHREAD("pwrite", (bytes_written == write_bytes ? 0 : -1));
+    }
+
 
     return (void*)FCP_OK;
 }
