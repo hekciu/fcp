@@ -133,17 +133,23 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 		params->thread_num = t_num;
 
 		if (config->async && config->use_legacy_libaio) {
+            printf("copying with libaio on thread %lu!\n", t_num);
+
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
 						   async_libaio_read_thread_callback,
 						   (void*)params));
 		}
 		else if (config->async) {
+            printf("copying with liburing on thread %lu!\n", t_num);
+
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
 						   async_liburing_read_thread_callback,
 						   (void*)params));
 		} else {
+            printf("copying pread/pwrite on thread %lu!\n", t_num);
+
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
 						   sync_read_thread_callback,
@@ -222,7 +228,6 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 
 
 
-
 /* ASYNC COPY WITH LIBAIO */
 static void* async_libaio_read_thread_callback(void* read_thread_params) {
     read_thread_params_t* params = (read_thread_params_t*) read_thread_params;
@@ -231,28 +236,65 @@ static void* async_libaio_read_thread_callback(void* read_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO("io_setup (io_context_read)", io_setup(maxevents, (io_context_read_array + params->thread_num)));
 
-	struct iocb* read_configs = calloc(maxevents, sizeof(struct iocb));
+    size_t num_chunks = params->n_bytes / params->fs_block_size;
+    if ((params->n_bytes % params->fs_block_size) != 0) num_chunks++;
 
-	struct io_event* read_events = calloc(maxevents, sizeof(struct io_event));
+	struct iocb* read_configs = calloc(num_chunks, sizeof(struct iocb));
 
-	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+	struct io_event* read_events = calloc(num_chunks, sizeof(struct io_event));
 
-	*(read_configs_ptrs_array + params->thread_num) = calloc(maxevents, sizeof(struct iocb*));
+	*(read_configs_ptrs_array + params->thread_num) = calloc(num_chunks, sizeof(struct iocb*));
 
-	for (int n = 0; n < maxevents; n++) {
-		struct iocb* cur_iocb_read = read_configs + n;
-		size_t relative_offset = n * bytes_per_call;
+    size_t chunks_issued_read = 0;
+    size_t chunks_ended_read = 0;
+
+    for (int i = 0; i < maxevents; i++)
+    {
+        if (chunks_issued_read == num_chunks) break;
+
+		struct iocb* cur_iocb_read = read_configs + chunks_issued_read;
+		size_t relative_offset = chunks_issued_read * params->fs_block_size;
 		size_t offset = params->offset + relative_offset;
-		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
+		size_t copy_bytes = (chunks_issued_read == (num_chunks - 1)) ? (params->n_bytes - relative_offset) : params->fs_block_size;
 
 		io_prep_pread(cur_iocb_read, params->src_fd, params->buffer + relative_offset, copy_bytes, offset);
 
-		*(*(read_configs_ptrs_array + params->thread_num) + n) = cur_iocb_read;
-	}
+		*(*(read_configs_ptrs_array + params->thread_num) + chunks_issued_read) = cur_iocb_read;
+
+        chunks_issued_read++;
+    }
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(*(io_context_read_array + params->thread_num), maxevents, *(read_configs_ptrs_array + params->thread_num)));
 
-	io_getevents(*(io_context_read_array + params->thread_num), maxevents, maxevents, read_events, 0);
+
+    while (chunks_issued_read != num_chunks)
+    {
+
+	    io_getevents(*(io_context_read_array + params->thread_num), 1, 1, read_events, 0);
+
+        chunks_ended_read++;
+
+		struct iocb* cur_iocb_read = read_configs + chunks_issued_read;
+		size_t relative_offset = chunks_issued_read * params->fs_block_size;
+		size_t offset = params->offset + relative_offset;
+		size_t copy_bytes = (chunks_issued_read == (num_chunks - 1)) ? (params->n_bytes - relative_offset) : params->fs_block_size;
+
+		io_prep_pread(cur_iocb_read, params->src_fd, params->buffer + relative_offset, copy_bytes, offset);
+
+		*(*(read_configs_ptrs_array + params->thread_num) + chunks_issued_read) = cur_iocb_read;
+
+	    SYSCALL_ERR_HANDLE_PTHREAD("io_submit (read events)", io_submit(*(io_context_read_array + params->thread_num), 1, *(read_configs_ptrs_array + params->thread_num) + chunks_issued_read));
+
+        chunks_issued_read++;
+    }
+
+    while (chunks_ended_read != num_chunks)
+    {
+
+	    io_getevents(*(io_context_read_array + params->thread_num), 1, 1, read_events, 0);
+
+        chunks_ended_read++;
+    }
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_read", io_destroy(*(io_context_read_array + params->thread_num)));
 
@@ -267,32 +309,69 @@ static void* async_libaio_write_thread_callback(void* write_thread_params) {
 
 	SYSCALL_ERR_HANDLE_PTHREAD_LIBAIO("io_setup (io_context_write)", io_setup(maxevents, (io_context_write_array + params->thread_num)));
 
-	struct iocb* write_configs = calloc(maxevents, sizeof(struct iocb));
+    size_t num_chunks = params->n_bytes / params->fs_block_size;
+    if ((params->n_bytes % params->fs_block_size) != 0) num_chunks++;
 
-	struct io_event* write_events = calloc(maxevents, sizeof(struct io_event));
+	struct iocb* write_configs = calloc(num_chunks, sizeof(struct iocb));
 
-	size_t bytes_per_call = params->n_bytes / (size_t)maxevents;
+	struct io_event* write_events = calloc(num_chunks, sizeof(struct io_event));
 
-	*(write_configs_ptrs_array + params->thread_num) = calloc(maxevents, sizeof(struct iocb*));
+	*(write_configs_ptrs_array + params->thread_num) = calloc(num_chunks, sizeof(struct iocb*));
 
-	for (int n = 0; n < maxevents; n++) {
-		struct iocb* cur_iocb_write = write_configs + n;
-		size_t relative_offset = n * bytes_per_call;
+    size_t chunks_issued_write = 0;
+    size_t chunks_ended_write = 0;
+
+    for (int i = 0; i < maxevents; i++)
+    {
+        if (chunks_issued_write == num_chunks) break;
+
+		struct iocb* cur_iocb_write = write_configs + chunks_issued_write;
+		size_t relative_offset = chunks_issued_write * params->fs_block_size;
 		size_t offset = params->offset + relative_offset;
-		size_t copy_bytes = (n == (maxevents - 1)) ? (params->n_bytes - relative_offset) : bytes_per_call;
+		size_t copy_bytes = (chunks_issued_write == (num_chunks - 1)) ? (params->n_bytes - relative_offset) : params->fs_block_size;
 
 		io_prep_pwrite(cur_iocb_write, params->dest_fd, params->buffer + relative_offset, copy_bytes, offset);
 
-		*(*(write_configs_ptrs_array + params->thread_num) + n) = cur_iocb_write;
-	}
+		*(*(write_configs_ptrs_array + params->thread_num) + chunks_issued_write) = cur_iocb_write;
+
+        chunks_issued_write++;
+    }
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write events)", io_submit(*(io_context_write_array + params->thread_num), maxevents, *(write_configs_ptrs_array + params->thread_num)));
 
-	io_getevents(*(io_context_write_array + params->thread_num), maxevents, maxevents, write_events, 0);
+
+    while (chunks_issued_write != num_chunks)
+    {
+
+	    io_getevents(*(io_context_write_array + params->thread_num), 1, 1, write_events, 0);
+
+        chunks_ended_write++;
+
+		struct iocb* cur_iocb_write = write_configs + chunks_issued_write;
+		size_t relative_offset = chunks_issued_write * params->fs_block_size;
+		size_t offset = params->offset + relative_offset;
+		size_t copy_bytes = (chunks_issued_write == (num_chunks - 1)) ? (params->n_bytes - relative_offset) : params->fs_block_size;
+
+		io_prep_pwrite(cur_iocb_write, params->dest_fd, params->buffer + relative_offset, copy_bytes, offset);
+
+		*(*(write_configs_ptrs_array + params->thread_num) + chunks_issued_write) = cur_iocb_write;
+
+	    SYSCALL_ERR_HANDLE_PTHREAD("io_submit (write events)", io_submit(*(io_context_write_array + params->thread_num), 1, *(write_configs_ptrs_array + params->thread_num) + chunks_issued_write));
+
+        chunks_issued_write++;
+    }
+
+    while (chunks_ended_write != num_chunks)
+    {
+
+	    io_getevents(*(io_context_write_array + params->thread_num), 1, 1, write_events, 0);
+
+        chunks_ended_write++;
+    }
 
 	SYSCALL_ERR_HANDLE_PTHREAD("io_destroy io_context_write", io_destroy(*(io_context_write_array + params->thread_num)));
 
-	return (void*)FCP_OK;
+    return (void*)FCP_OK;
 }
 
 
