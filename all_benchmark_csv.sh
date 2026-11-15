@@ -1,10 +1,11 @@
-#!/bin/sh
+#!/bin/bash
 
 set -e
 
-FOLDER='./test'
+FOLDER=./test
 
 # min(file_sizes) >= (max(threads) * max(queue_depth) * max(fs_block_size))
+
 declare -a file_size_list=("2147483648" "1073741824" "536870912")
 declare -a num_threads_list=("1" "2" "4")
 
@@ -22,6 +23,8 @@ do
         do
             for fs_block_size in "${fs_block_sizes[@]}"
             do
+                echo "$file_size $num_threads $queue_depth $fs_block_size"
+
                 ASYNCHRONOUS="1"
 
                 if [ "$queue_depth" = "0" ]; then
@@ -37,13 +40,11 @@ do
                     SOURCE_FILE="$FOLDER/fcp_source_$TIMESTAMP"
                     DESTINATION_FILE="$FOLDER/fcp_destination_$TIMESTAMP"
 
-                    head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+                    head -c $file_size < /dev/urandom > $SOURCE_FILE
 
                     ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --queue_depth $queue_depth --fs_block_size $fs_block_size --legacy --csv
 
-                    if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
-                        # benchmark finished
-                    else
+                    if ! cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
                         echo "something went wrong, files are different!"
                         echo "source file size:"
                         wc -c <  $SOURCE_FILE
@@ -58,13 +59,11 @@ do
                     SOURCE_FILE="$FOLDER/fcp_source_$TIMESTAMP"
                     DESTINATION_FILE="$FOLDER/fcp_destination_$TIMESTAMP"
 
-                    head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+                    head -c $file_size < /dev/urandom > $SOURCE_FILE
 
                     ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --queue_depth $queue_depth --fs_block_size $fs_block_size --legacy --direct --csv
 
-                    if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
-                        # benchmark finished
-                    else
+                    if ! cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
                         echo "something went wrong, files are different!"
                         echo "source file size:"
                         wc -c <  $SOURCE_FILE
@@ -79,13 +78,11 @@ do
                     SOURCE_FILE="$FOLDER/fcp_source_$TIMESTAMP"
                     DESTINATION_FILE="$FOLDER/fcp_destination_$TIMESTAMP"
 
-                    head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+                    head -c $file_size < /dev/urandom > $SOURCE_FILE
 
                     ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --queue_depth $queue_depth --fs_block_size $fs_block_size --csv
 
-                    if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
-                        # benchmark finished
-                    else
+                    if ! cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
                         echo "something went wrong, files are different!"
                         echo "source file size:"
                         wc -c <  $SOURCE_FILE
@@ -100,13 +97,11 @@ do
                     SOURCE_FILE="$FOLDER/fcp_source_$TIMESTAMP"
                     DESTINATION_FILE="$FOLDER/fcp_destination_$TIMESTAMP"
 
-                    head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+                    head -c $file_size < /dev/urandom > $SOURCE_FILE
 
                     ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --queue_depth $queue_depth --fs_block_size $fs_block_size --direct --csv
 
-                    if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
-                        # benchmark finished
-                    else
+                    if ! cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
                         echo "something went wrong, files are different!"
                         echo "source file size:"
                         wc -c <  $SOURCE_FILE
@@ -121,13 +116,11 @@ do
                     SOURCE_FILE="$FOLDER/fcp_source_$TIMESTAMP"
                     DESTINATION_FILE="$FOLDER/fcp_destination_$TIMESTAMP"
 
-                    head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+                    head -c $file_size < /dev/urandom > $SOURCE_FILE
 
-                    ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --queue_depth 0 --fs_block_size $fs_block_size --csv
+                    ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --fs_block_size $fs_block_size --csv
 
-                    if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
-                        # benchmark finished
-                    else
+                    if ! cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
                         echo "something went wrong, files are different!"
                         echo "source file size:"
                         wc -c <  $SOURCE_FILE
@@ -142,13 +135,11 @@ do
                     SOURCE_FILE="$FOLDER/fcp_source_$TIMESTAMP"
                     DESTINATION_FILE="$FOLDER/fcp_destination_$TIMESTAMP"
 
-                    head -c $FILE_SIZE < /dev/urandom > $SOURCE_FILE
+                    head -c $file_size < /dev/urandom > $SOURCE_FILE
 
-                    ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --queue_depth 0 --fs_block_size $fs_block_size --direct --csv
+                    ./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $num_threads --fs_block_size $fs_block_size --direct --csv
 
-                    if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
-                        # benchmark finished
-                    else
+                    if ! cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then
                         echo "something went wrong, files are different!"
                         echo "source file size:"
                         wc -c <  $SOURCE_FILE
