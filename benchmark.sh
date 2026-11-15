@@ -9,6 +9,7 @@ QUEUE_DEPTH=$4
 BLOCK_SIZE=$5
 ADDITIONAL_ARG_1=$6
 ADDITIONAL_ARG_2=$7
+ADDITIONAL_ARG_3=$8
 
 ASYNCHRONOUS="1"
 
@@ -39,9 +40,9 @@ echo "copying file to $DESTINATION_FILE"
 # sudo sysctl vm.drop_caches=3
 
 if [ "$ASYNCHRONOUS" = "1" ]; then
-	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH --fs_block_size $BLOCK_SIZE $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --queue_depth $QUEUE_DEPTH --fs_block_size $BLOCK_SIZE $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2 $ADDITIONAL_ARG_3
 else
-	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --fs_block_size $BLOCK_SIZE $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2
+	./fcp --input $SOURCE_FILE --output $DESTINATION_FILE --threads $THREADS --fs_block_size $BLOCK_SIZE $ADDITIONAL_ARG_1 $ADDITIONAL_ARG_2 $ADDITIONAL_ARG_3
 fi
 
 if cmp --silent -- "$SOURCE_FILE" "$DESTINATION_FILE"; then

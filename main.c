@@ -17,23 +17,23 @@ static struct option long_opt[] =
   {"help", no_argument, NULL, 'h'},
   {"input", required_argument, NULL, 'i'},
   {"output", required_argument, NULL, 'o'},
-  {"raw", no_argument, NULL, 'r'},
   {"threads", required_argument, NULL, 't'},
   {"queue_depth", required_argument, NULL, 'q'},
   {"fs_block_size", required_argument, NULL, 'b'},
   {"legacy", no_argument, NULL, 'l'},
   {"direct", no_argument, NULL, 'd'},
+  {"csv", no_argument, NULL, 'c'},
   {NULL, 0, NULL, 0}
 };
 
-static const char*  short_opt = "hiortqbld";
+static const char*  short_opt = "hiotqbldc";
 
 int main(int argc, char** argv) {
     fcp_copy_config_t config = {0};
     fcp_copy_output_t output = {0};
 
     /* defaults */
-    bool output_raw = false;
+    bool output_csv_row = false;
     config.threads = 1;
     config.queue_depth = 0;
     config.async = false;
@@ -63,16 +63,16 @@ int main(int argc, char** argv) {
             config.dest = optarg;
             break;
 
-            case 'r':
-            output_raw = true;
-            break;
-
             case 'l':
             config.use_legacy_libaio = true;
             break;
 
             case 'd':
             config.use_direct = true;
+            break;
+
+            case 'c':
+            output_csv_row = true;
             break;
 
             case 'q':
@@ -129,13 +129,45 @@ int main(int argc, char** argv) {
 
     HANDLE_ERROR(fcp_copy(&config, &output));
 
-    /*
-    if (output_raw) {
-        printf("%lu", output.elapsed_ns);
+    double read_bytes_per_second =
+        ((double)input_stat.st_size) / (((double)output.read_elapsed_ns) / 1000000000.0); 
+
+    double read_megabytes_per_second = read_bytes_per_second / 1000000.0;
+
+    double write_bytes_per_second =
+        ((double)input_stat.st_size) / (((double)output.write_elapsed_ns) / 1000000000.0); 
+
+    double write_megabytes_per_second = write_bytes_per_second / 1000000.0;
+
+    if (true == output_csv_row) {
+        char* io_type = NULL;
+
+        if (false == config.async)
+        {
+            io_type = "psync";
+        }
+        else if (true == config.use_legacy_libaio)
+        {
+            io_type = "libaio";
+        }
+        else
+        {
+            io_type = "io_uring";
+        }
+
+        /* num_threads:type[psync/libaio/io_uring]:direct(true/false):queue_depth:file_size:fs_block_size:read_megabytes_per_second:write_megabytes_per_second */
+        printf("%u,%s,%i,%u,%lu,%u,%lf,%lf\n",
+            config.threads,
+            io_type,
+            config.use_direct,
+            config.queue_depth,
+            input_stat.st_size,
+            config.fs_block_size,
+            read_megabytes_per_second,
+            write_megabytes_per_second);
 
         return 0;
     }
-    */
 
 	printf("input: '%s', output: '%s'\n", config.src, config.dest);
     printf("number of threads: %u, queue depth: %u\n", config.threads, config.queue_depth);
@@ -145,18 +177,7 @@ int main(int argc, char** argv) {
     printf("write: ");
     fcp_print_time(output.write_elapsed_ns);
 
-    double read_bytes_per_second =
-        ((double)input_stat.st_size) / (((double)output.read_elapsed_ns) / 1000000000.0); 
-
-    double read_megabytes_per_second = read_bytes_per_second / 1000000.0;
-
     printf("read megabytes per second: %f\n", read_megabytes_per_second);
-
-
-    double write_bytes_per_second =
-        ((double)input_stat.st_size) / (((double)output.write_elapsed_ns) / 1000000000.0); 
-
-    double write_megabytes_per_second = write_bytes_per_second / 1000000.0;
 
     printf("write megabytes per second: %f\n", write_megabytes_per_second);
 

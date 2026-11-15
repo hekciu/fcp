@@ -133,23 +133,17 @@ FCP_ERROR fcp_copy(fcp_copy_config_t* config, fcp_copy_output_t* output) {
 		params->thread_num = t_num;
 
 		if (config->async && config->use_legacy_libaio) {
-            printf("copying with libaio on thread %lu!\n", t_num);
-
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
 						   async_libaio_read_thread_callback,
 						   (void*)params));
 		}
 		else if (config->async) {
-            printf("copying with liburing on thread %lu!\n", t_num);
-
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
 						   async_liburing_read_thread_callback,
 						   (void*)params));
 		} else {
-            printf("copying pread/pwrite on thread %lu!\n", t_num);
-
 			SYSCALL_ERR_HANDLE("pthread_create (sync)", pthread_create(thread,
 						   NULL, 
 						   sync_read_thread_callback,
